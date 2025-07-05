@@ -13,18 +13,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "./dataset_impl.h"
-
-#include <cstdint>
-#include <string>
-#include <unordered_map>
-#include <variant>
+#include "dataset_impl.h"
 
 namespace vsag {
 
 DatasetPtr
 Dataset::Make() {
     return std::make_shared<DatasetImpl>();
+}
+
+DatasetPtr
+DatasetImpl::MakeEmptyDataset() {
+    auto result = std::make_shared<DatasetImpl>();
+    result->Dim(0)->NumElements(1);
+    return result;
 }
 
 };  // namespace vsag

@@ -18,36 +18,14 @@
 #include <cstdint>
 #include <memory>
 
+#include "../logger.h"
+#include "computer.h"
 #include "metric_type.h"
+#include "stream_reader.h"
+#include "stream_writer.h"
+
 namespace vsag {
 using DataType = float;
-
-template <typename T>
-class Quantizer;
-
-template <typename T>
-class Computer {
-public:
-    ~Computer() {
-        delete[] buf_;
-    }
-
-    explicit Computer(const T& quantizer) : quantizer_(&quantizer){};
-
-    void
-    SetQuery(const DataType* query) {
-        quantizer_->ProcessQuery(query, *this);
-    }
-
-    inline void
-    ComputeDist(const uint8_t* codes, float* dists) {
-        quantizer_->ComputeDist(*this, codes, dists);
-    }
-
-    const T* quantizer_{nullptr};
-
-    uint8_t* buf_{nullptr};  // todo how to alloc and free
-};
 
 /**
  * @class Quantizer
@@ -56,7 +34,8 @@ public:
 template <typename T>
 class Quantizer {
 public:
-    explicit Quantizer<T>(int dim) : dim_(dim), codeSize_(dim * sizeof(DataType)){};
+    explicit Quantizer<T>(int dim, Allocator* allocator)
+        : dim_(dim), code_size_(dim * sizeof(DataType)), allocator_(allocator){};
 
     ~Quantizer() = default;
 
@@ -81,7 +60,7 @@ public:
      */
     bool
     ReTrain(const DataType* data, uint64_t count) {
-        this->isTrained_ = false;
+        this->is_trained_ = false;
         return cast().TrainImpl(data, count);
     }
 
@@ -148,9 +127,27 @@ public:
         return cast().ComputeImpl(codes1, codes2);
     }
 
-    std::unique_ptr<Computer<T>>
+    inline void
+    Serialize(StreamWriter& writer) {
+        StreamWriter::WriteObj(writer, this->dim_);
+        StreamWriter::WriteObj(writer, this->metric_);
+        StreamWriter::WriteObj(writer, this->code_size_);
+        StreamWriter::WriteObj(writer, this->is_trained_);
+        return cast().SerializeImpl(writer);
+    }
+
+    inline void
+    Deserialize(StreamReader& reader) {
+        StreamReader::ReadObj(reader, this->dim_);
+        StreamReader::ReadObj(reader, this->metric_);
+        StreamReader::ReadObj(reader, this->code_size_);
+        StreamReader::ReadObj(reader, this->is_trained_);
+        return cast().DeserializeImpl(reader);
+    }
+
+    std::shared_ptr<Computer<T>>
     FactoryComputer() {
-        return std::make_unique<Computer<T>>(cast());
+        return std::make_shared<Computer<T>>(static_cast<T*>(this));
     }
 
     inline void
@@ -165,9 +162,32 @@ public:
 
     inline float
     ComputeDist(Computer<T>& computer, const uint8_t* codes) const {
-        float dist = 0.;
-        cast().ComputeDistImpl(computer, codes, dist);
+        float dist = 0.0f;
+        cast().ComputeDistImpl(computer, codes, &dist);
         return dist;
+    }
+
+    inline void
+    ComputeBatchDists(Computer<T>& computer,
+                      uint64_t count,
+                      const uint8_t* codes,
+                      float* dists) const {
+        return cast().ComputeBatchDistImpl(computer, count, codes, dists);
+    }
+
+    inline void
+    ReleaseComputer(Computer<T>& computer) const {
+        cast().ReleaseComputerImpl(computer);
+    }
+
+    [[nodiscard]] virtual std::string
+    Name() const {
+        return cast().NameImpl();
+    }
+
+    [[nodiscard]] MetricType
+    Metric() const {
+        return this->metric_;
     }
 
     /**
@@ -177,7 +197,7 @@ public:
      */
     inline uint64_t
     GetCodeSize() const {
-        return this->codeSize_;
+        return this->code_size_;
     }
 
     /**
@@ -205,12 +225,10 @@ private:
 
 private:
     uint64_t dim_{0};
-
-    uint64_t codeSize_{0};
-
-    bool isTrained_{false};
-
+    uint64_t code_size_{0};
+    bool is_trained_{false};
     MetricType metric_{MetricType::METRIC_TYPE_L2SQR};
+    Allocator* const allocator_{nullptr};
 };
 
 }  // namespace vsag

@@ -17,27 +17,30 @@
 
 #include <nlohmann/json.hpp>
 #include <queue>
-#include <unordered_map>
-#include <unordered_set>
 
 #include "../footer.h"
 #include "../logger.h"
+#include "typing.h"
 #include "vsag/index.h"
 
 namespace vsag {
 
 static const int64_t LOOK_AT_K = 20;
+static const int64_t MAXIMUM_DEGREE = 128;
 
 class ConjugateGraph {
 public:
-    ConjugateGraph();
+    ConjugateGraph(Allocator* allocator);
 
     tl::expected<bool, Error>
     AddNeighbor(int64_t from_tag_id, int64_t to_tag_id);
 
     tl::expected<uint32_t, Error>
-    EnhanceResult(std::priority_queue<std::pair<float, size_t>>& results,
+    EnhanceResult(std::priority_queue<std::pair<float, LabelType>>& results,
                   const std::function<float(int64_t)>& distance_of_tag) const;
+
+    tl::expected<bool, Error>
+    UpdateId(int64_t old_tag_id, int64_t new_tag_id);
 
 public:
     tl::expected<Binary, Error>
@@ -50,24 +53,29 @@ public:
     Deserialize(const Binary& binary);
 
     tl::expected<void, Error>
-    Deserialize(std::istream& in_stream);
+    Deserialize(StreamReader& in_stream);
 
     size_t
     GetMemoryUsage() const;
 
 private:
-    const std::unordered_set<int64_t>&
+    std::shared_ptr<UnorderedSet<int64_t>>
     get_neighbors(int64_t from_tag_id) const;
 
     void
     clear();
 
+    bool
+    is_empty() const;
+
 private:
     uint32_t memory_usage_;
 
-    std::unordered_map<int64_t, std::unordered_set<int64_t>> conjugate_graph_;
+    UnorderedMap<int64_t, std::shared_ptr<UnorderedSet<int64_t>>> conjugate_graph_;
 
     SerializationFooter footer_;
+
+    Allocator* allocator_;
 };
 
 }  // namespace vsag

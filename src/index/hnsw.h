@@ -26,59 +26,51 @@
 #include <utility>
 #include <vector>
 
-#include "../algorithm/hnswlib/hnswlib.h"
-#include "../common.h"
-#include "../default_allocator.h"
-#include "../impl/conjugate_graph.h"
-#include "../logger.h"
-#include "../safe_allocator.h"
-#include "../utils.h"
+#include "algorithm/hnswlib/hnswlib.h"
+#include "base_filter_functor.h"
+#include "common.h"
+#include "data_cell/flatten_interface.h"
+#include "data_cell/graph_interface.h"
+#include "data_type.h"
+#include "hnsw_zparameters.h"
+#include "impl/conjugate_graph.h"
+#include "index_common_param.h"
+#include "index_feature_list.h"
+#include "index_impl.h"
+#include "logger.h"
+#include "safe_allocator.h"
+#include "typing.h"
+#include "utils/window_result_queue.h"
 #include "vsag/binaryset.h"
 #include "vsag/errors.h"
 #include "vsag/index.h"
+#include "vsag/iterator_context.h"
 #include "vsag/readerset.h"
 
 namespace vsag {
-class BitsetOrCallbackFilter : public hnswlib::BaseFilterFunctor {
-public:
-    BitsetOrCallbackFilter(const std::function<bool(int64_t)>& func) : func_(func) {
-        is_bitset_filter_ = false;
-    }
 
-    BitsetOrCallbackFilter(const BitsetPtr& bitset) : bitset_(bitset) {
-        is_bitset_filter_ = true;
-    }
+enum class VSAGIndexStatus : int {
+    // start with -1
 
-    bool
-    operator()(hnswlib::labeltype id) override {
-        if (is_bitset_filter_) {
-            int64_t bit_index = id & ROW_ID_MASK;
-            return not bitset_->Test(bit_index);
-        } else {
-            return not func_(id);
-        }
-    }
-
-private:
-    std::function<bool(int64_t)> func_;
-    BitsetPtr bitset_;
-    bool is_bitset_filter_ = false;
+    DESTROYED = -1,  // index is destructing
+    ALIVE            // index is alive
 };
 
 class HNSW : public Index {
 public:
-    HNSW(std::shared_ptr<hnswlib::SpaceInterface> space_interface,
-         int M,
-         int ef_construction,
-         bool use_static = false,
-         bool use_reversed_edges = false,
-         bool use_conjugate_graph = false,
-         bool normalize = false,
-         Allocator* allocator = nullptr);
+    HNSW(HnswParameters hnsw_params, const IndexCommonParam& index_common_param);
 
     virtual ~HNSW() {
+        {
+            std::unique_lock status_lock(index_status_mutex_);
+            this->SetStatus(VSAGIndexStatus::DESTROYED);
+        }
+
         alg_hnsw_ = nullptr;
-        delete allocator_;
+        if (use_conjugate_graph_) {
+            conjugate_graph_.reset();
+        }
+        allocator_.reset();
     }
 
 public:
@@ -97,6 +89,16 @@ public:
         SAFE_CALL(return this->remove(id));
     }
 
+    tl::expected<bool, Error>
+    UpdateId(int64_t old_id, int64_t new_id) override {
+        SAFE_CALL(return this->update_id(old_id, new_id));
+    }
+
+    tl::expected<bool, Error>
+    UpdateVector(int64_t id, const DatasetPtr& new_base, bool force_update = false) override {
+        SAFE_CALL(return this->update_vector(id, new_base, force_update));
+    }
+
     tl::expected<DatasetPtr, Error>
     KnnSearch(const DatasetPtr& query,
               int64_t k,
@@ -111,6 +113,25 @@ public:
               const std::string& parameters,
               BitsetPtr invalid = nullptr) const override {
         SAFE_CALL(return this->knn_search_internal(query, k, parameters, invalid));
+    }
+
+    tl::expected<DatasetPtr, Error>
+    KnnSearch(const DatasetPtr& query,
+              int64_t k,
+              const std::string& parameters,
+              const FilterPtr& filter) const override {
+        SAFE_CALL(return this->knn_search(query, k, parameters, filter));
+    }
+
+    tl::expected<DatasetPtr, Error>
+    KnnSearch(const DatasetPtr& query,
+              int64_t k,
+              const std::string& parameters,
+              const FilterPtr& filter,
+              vsag::IteratorContext*& filter_ctx,
+              bool is_last_search) const override {
+        SAFE_CALL(
+            return this->knn_search(query, k, parameters, filter, &filter_ctx, is_last_search));
     }
 
     tl::expected<DatasetPtr, Error>
@@ -159,7 +180,17 @@ public:
 
     virtual tl::expected<float, Error>
     CalcDistanceById(const float* vector, int64_t id) const override {
-        SAFE_CALL(return alg_hnsw_->getDistanceByLabel(id, vector));
+        SAFE_CALL(return this->calc_distance_by_id(vector, id));
+    };
+
+    virtual tl::expected<DatasetPtr, Error>
+    CalDistanceById(const float* vector, const int64_t* ids, int64_t count) const override {
+        SAFE_CALL(return this->calc_distance_by_id(vector, ids, count));
+    };
+
+    virtual tl::expected<std::pair<int64_t, int64_t>, Error>
+    GetMinAndMaxId() const override {
+        SAFE_CALL(return this->get_min_and_max_id());
     };
 
 public:
@@ -188,18 +219,50 @@ public:
         SAFE_CALL(return this->deserialize(in_stream));
     }
 
+    tl::expected<void, Error>
+    Merge(const std::vector<MergeUnit>& merge_units) override {
+        SAFE_CALL(return this->merge(merge_units));
+    }
+
 public:
+    bool
+    IsValidStatus() const {
+        return index_status_ != VSAGIndexStatus::DESTROYED;
+    }
+
+    void
+    SetStatus(VSAGIndexStatus status) {
+        index_status_ = status;
+    }
+
+    std::string
+    PrintStatus() const {
+        switch (index_status_) {
+            case VSAGIndexStatus::DESTROYED:
+                return "Destroyed";
+            case VSAGIndexStatus::ALIVE:
+                return "Alive";
+            default:
+                return "";
+        }
+    }
+
+    [[nodiscard]] bool
+    CheckFeature(IndexFeature feature) const override;
+
+    [[nodiscard]] bool
+    CheckIdExist(int64_t id) const override {
+        return this->check_id_exist(id);
+    }
+
     int64_t
     GetNumElements() const override {
-        return alg_hnsw_->getCurrentElementCount() - alg_hnsw_->getDeletedCount();
+        return this->get_num_elements();
     }
 
     int64_t
     GetMemoryUsage() const override {
-        if (use_conjugate_graph_)
-            return alg_hnsw_->calcSerializeSize() + conjugate_graph_->GetMemoryUsage();
-        else
-            return alg_hnsw_->calcSerializeSize();
+        return this->get_memory_usage();
     }
 
     std::string
@@ -208,6 +271,19 @@ public:
     // used to test the integrity of graphs, used only in UT.
     bool
     CheckGraphIntegrity() const;
+
+    tl::expected<bool, Error>
+    InitMemorySpace();
+
+    bool
+    ExtractDataAndGraph(FlattenInterfacePtr& data,
+                        GraphInterfacePtr& graph,
+                        Vector<LabelType>& ids,
+                        const IdMapFunction& func,
+                        Allocator* allocator);
+
+    bool
+    SetDataAndGraph(FlattenInterfacePtr& data, GraphInterfacePtr& graph, Vector<LabelType>& ids);
 
 private:
     tl::expected<std::vector<int64_t>, Error>
@@ -218,6 +294,12 @@ private:
 
     tl::expected<bool, Error>
     remove(int64_t id);
+
+    tl::expected<bool, Error>
+    update_id(int64_t old_id, int64_t new_id);
+
+    tl::expected<bool, Error>
+    update_vector(int64_t id, const DatasetPtr& new_base, bool force_update);
 
     template <typename FilterType>
     tl::expected<DatasetPtr, Error>
@@ -230,7 +312,9 @@ private:
     knn_search(const DatasetPtr& query,
                int64_t k,
                const std::string& parameters,
-               hnswlib::BaseFilterFunctor* filter_ptr) const;
+               const FilterPtr& filter_ptr,
+               vsag::IteratorContext** iter_ctx = nullptr,
+               bool is_last_filter = false) const;
 
     template <typename FilterType>
     tl::expected<DatasetPtr, Error>
@@ -244,7 +328,7 @@ private:
     range_search(const DatasetPtr& query,
                  float radius,
                  const std::string& parameters,
-                 hnswlib::BaseFilterFunctor* filter_ptr,
+                 const FilterPtr& filter_ptr,
                  int64_t limited_size) const;
 
     tl::expected<uint32_t, Error>
@@ -272,13 +356,40 @@ private:
     deserialize(const BinarySet& binary_set);
 
     tl::expected<void, Error>
-    deserialize(const ReaderSet& binary_set);
+    deserialize(const ReaderSet& reader_set);
 
     tl::expected<void, Error>
     deserialize(std::istream& in_stream);
 
-    BinarySet
-    empty_binaryset() const;
+    void
+    get_vectors(const DatasetPtr& base, void** vectors_ptr, size_t* data_size_ptr) const;
+
+    void
+    set_dataset(const DatasetPtr& base, const void* vectors_ptr, uint32_t num_element) const;
+
+    tl::expected<void, Error>
+    merge(const std::vector<MergeUnit>& merge_units);
+
+    tl::expected<float, Error>
+    calc_distance_by_id(const float* vector, int64_t id) const;
+
+    tl::expected<DatasetPtr, Error>
+    calc_distance_by_id(const float* vector, const int64_t* ids, int64_t count) const;
+
+    tl::expected<std::pair<int64_t, int64_t>, Error>
+    get_min_and_max_id() const;
+
+    bool
+    check_id_exist(int64_t id) const;
+
+    int64_t
+    get_num_elements() const;
+
+    int64_t
+    get_memory_usage() const;
+
+    void
+    init_feature_list();
 
 private:
     std::shared_ptr<hnswlib::AlgorithmInterface<float>> alg_hnsw_;
@@ -291,13 +402,22 @@ private:
     bool use_static_ = false;
     bool empty_index_ = false;
     bool use_reversed_edges_ = false;
+    bool is_init_memory_ = false;
+    int64_t max_degree_{0};
 
-    SafeAllocator* allocator_ = nullptr;
+    DataTypes type_;
+
+    std::shared_ptr<Allocator> allocator_;
 
     mutable std::mutex stats_mutex_;
     mutable std::map<std::string, WindowResultQueue> result_queues_;
 
     mutable std::shared_mutex rw_mutex_;
+    mutable std::shared_mutex index_status_mutex_;
+
+    VSAGIndexStatus index_status_{VSAGIndexStatus::ALIVE};
+    IndexFeatureList feature_list_{};
+    const IndexCommonParam index_common_param_;
 };
 
 }  // namespace vsag

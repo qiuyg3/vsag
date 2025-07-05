@@ -20,11 +20,14 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
-#include "../../tests/fixtures/fixtures.h"
+#include "fixtures.h"
+#include "safe_allocator.h"
+#include "stream_reader.h"
 
-TEST_CASE("build, add and memory usage", "[ut][conjugate_graph]") {
+TEST_CASE("ConjugateGraph Build, Add and Memory Usage", "[ut][ConjugateGraph]") {
+    auto allocator = vsag::SafeAllocator::FactoryDefaultAllocator();
     std::shared_ptr<vsag::ConjugateGraph> conjugate_graph =
-        std::make_shared<vsag::ConjugateGraph>();
+        std::make_shared<vsag::ConjugateGraph>(allocator.get());
     REQUIRE(conjugate_graph->GetMemoryUsage() == 4 + vsag::FOOTER_SIZE);
     REQUIRE(conjugate_graph->AddNeighbor(0, 0) == false);
     REQUIRE(conjugate_graph->GetMemoryUsage() == 4 + vsag::FOOTER_SIZE);
@@ -42,9 +45,10 @@ TEST_CASE("build, add and memory usage", "[ut][conjugate_graph]") {
     REQUIRE(conjugate_graph->GetMemoryUsage() == 60 + vsag::FOOTER_SIZE);
 }
 
-TEST_CASE("serialize and deserialize with binary", "[ut][conjugate_graph]") {
+TEST_CASE("ConjugateGraph Serialize and Deserialize with Binary", "[ut][ConjugateGraph]") {
+    auto allocator = vsag::SafeAllocator::FactoryDefaultAllocator();
     std::shared_ptr<vsag::ConjugateGraph> conjugate_graph =
-        std::make_shared<vsag::ConjugateGraph>();
+        std::make_shared<vsag::ConjugateGraph>(allocator.get());
 
     conjugate_graph->AddNeighbor(0, 2);
     conjugate_graph->AddNeighbor(0, 1);
@@ -97,7 +101,7 @@ TEST_CASE("serialize and deserialize with binary", "[ut][conjugate_graph]") {
     SECTION("deserialize with invalid magic_num") {
         vsag::Binary binary = *conjugate_graph->Serialize();
 
-        nlohmann::json json;
+        vsag::JsonType json;
         json[vsag::SERIALIZE_MAGIC_NUM] = std::to_string(0xABCD1234);
         json[vsag::SERIALIZE_VERSION] = vsag::VERSION;
         std::string json_str = json.dump();
@@ -121,7 +125,7 @@ TEST_CASE("serialize and deserialize with binary", "[ut][conjugate_graph]") {
     SECTION("deserialize with invalid version") {
         vsag::Binary binary = *conjugate_graph->Serialize();
 
-        nlohmann::json json;
+        vsag::JsonType json;
         json[vsag::SERIALIZE_MAGIC_NUM] = vsag::MAGIC_NUM;
         json[vsag::SERIALIZE_VERSION] = std::to_string(2);
         std::string json_str = json.dump();
@@ -143,16 +147,17 @@ TEST_CASE("serialize and deserialize with binary", "[ut][conjugate_graph]") {
     }
 }
 
-TEST_CASE("serialize and deserialize with stream", "[ut][conjugate_graph]") {
+TEST_CASE("ConjugateGraph Serialize and Deserialize with Stream", "[ut][ConjugateGraph]") {
+    auto allocator = vsag::SafeAllocator::FactoryDefaultAllocator();
     std::shared_ptr<vsag::ConjugateGraph> conjugate_graph =
-        std::make_shared<vsag::ConjugateGraph>();
+        std::make_shared<vsag::ConjugateGraph>(allocator.get());
 
     conjugate_graph->AddNeighbor(0, 2);
     conjugate_graph->AddNeighbor(0, 1);
     conjugate_graph->AddNeighbor(1, 0);
 
     SECTION("successful case") {
-        fixtures::temp_dir dir("conjugate_graph_test_deserialize_on_not_empty_index");
+        fixtures::TempDir dir("conjugate_graph_test_deserialize_on_not_empty_index");
         std::fstream out_stream(dir.path + "conjugate_graph.bin", std::ios::out | std::ios::binary);
         auto serialize_result = conjugate_graph->Serialize(out_stream);
         REQUIRE(serialize_result.has_value());
@@ -162,7 +167,8 @@ TEST_CASE("serialize and deserialize with stream", "[ut][conjugate_graph]") {
         in_stream.seekg(0, std::ios::end);
         REQUIRE(in_stream.tellg() == 60 + vsag::FOOTER_SIZE);
         in_stream.seekg(0, std::ios::beg);
-        REQUIRE(conjugate_graph->Deserialize(in_stream).has_value());
+        IOStreamReader reader(in_stream);
+        REQUIRE(conjugate_graph->Deserialize(reader).has_value());
         in_stream.close();
 
         REQUIRE(conjugate_graph->GetMemoryUsage() == 60 + vsag::FOOTER_SIZE);
@@ -172,13 +178,13 @@ TEST_CASE("serialize and deserialize with stream", "[ut][conjugate_graph]") {
     }
 
     SECTION("invalid magic_num") {
-        fixtures::temp_dir dir("conjugate_graph_test_deserialize_on_not_empty_index");
+        fixtures::TempDir dir("conjugate_graph_test_deserialize_on_not_empty_index");
         std::fstream out_stream(dir.path + "conjugate_graph.bin", std::ios::out | std::ios::binary);
         auto serialize_result = conjugate_graph->Serialize(out_stream);
         REQUIRE(serialize_result.has_value());
         out_stream.seekg(conjugate_graph->GetMemoryUsage() - vsag::FOOTER_SIZE, std::ios::beg);
 
-        nlohmann::json json;
+        vsag::JsonType json;
         json[vsag::SERIALIZE_MAGIC_NUM] = std::to_string(0xABCD1234);
         json[vsag::SERIALIZE_VERSION] = vsag::VERSION;
         std::string json_str = json.dump();
@@ -189,19 +195,19 @@ TEST_CASE("serialize and deserialize with stream", "[ut][conjugate_graph]") {
         out_stream.close();
 
         std::fstream in_stream(dir.path + "conjugate_graph.bin", std::ios::in | std::ios::binary);
-        REQUIRE(conjugate_graph->Deserialize(in_stream).error().type ==
-                vsag::ErrorType::READ_ERROR);
+        IOStreamReader reader(in_stream);
+        REQUIRE(conjugate_graph->Deserialize(reader).error().type == vsag::ErrorType::READ_ERROR);
         in_stream.close();
     }
 
     SECTION("invalid version") {
-        fixtures::temp_dir dir("conjugate_graph_test_deserialize_on_not_empty_index");
+        fixtures::TempDir dir("conjugate_graph_test_deserialize_on_not_empty_index");
         std::fstream out_stream(dir.path + "conjugate_graph.bin", std::ios::out | std::ios::binary);
         auto serialize_result = conjugate_graph->Serialize(out_stream);
         REQUIRE(serialize_result.has_value());
         out_stream.seekg(conjugate_graph->GetMemoryUsage() - vsag::FOOTER_SIZE, std::ios::beg);
 
-        nlohmann::json json;
+        vsag::JsonType json;
         json[vsag::SERIALIZE_MAGIC_NUM] = vsag::MAGIC_NUM;
         json[vsag::SERIALIZE_VERSION] = std::to_string(2);
         std::string json_str = json.dump();
@@ -212,13 +218,13 @@ TEST_CASE("serialize and deserialize with stream", "[ut][conjugate_graph]") {
         out_stream.close();
 
         std::fstream in_stream(dir.path + "conjugate_graph.bin", std::ios::in | std::ios::binary);
-        REQUIRE(conjugate_graph->Deserialize(in_stream).error().type ==
-                vsag::ErrorType::READ_ERROR);
+        IOStreamReader reader(in_stream);
+        REQUIRE(conjugate_graph->Deserialize(reader).error().type == vsag::ErrorType::READ_ERROR);
         in_stream.close();
     }
 
     SECTION("less bits") {
-        fixtures::temp_dir dir("conjugate_graph_test_deserialize_on_not_empty_index");
+        fixtures::TempDir dir("conjugate_graph_test_deserialize_on_not_empty_index");
         std::fstream out_stream(dir.path + "conjugate_graph.bin", std::ios::out | std::ios::binary);
         auto serialize_result = conjugate_graph->Serialize(out_stream);
         REQUIRE(serialize_result.has_value());
@@ -227,14 +233,14 @@ TEST_CASE("serialize and deserialize with stream", "[ut][conjugate_graph]") {
         std::filesystem::resize_file(dir.path + "conjugate_graph.bin", 55 + vsag::FOOTER_SIZE);
 
         std::fstream in_stream(dir.path + "conjugate_graph.bin", std::ios::in | std::ios::binary);
-        REQUIRE(conjugate_graph->Deserialize(in_stream).error().type ==
-                vsag::ErrorType::READ_ERROR);
+        IOStreamReader reader(in_stream);
+        REQUIRE(conjugate_graph->Deserialize(reader).error().type == vsag::ErrorType::READ_ERROR);
         in_stream.close();
     }
 
     SECTION("invalid header") {
         uint32_t invalid_memory_usage = 0;
-        fixtures::temp_dir dir("conjugate_graph_test_deserialize_on_not_empty_index");
+        fixtures::TempDir dir("conjugate_graph_test_deserialize_on_not_empty_index");
         std::fstream out_stream(dir.path + "conjugate_graph.bin", std::ios::out | std::ios::binary);
         auto serialize_result = conjugate_graph->Serialize(out_stream);
         REQUIRE(serialize_result.has_value());
@@ -243,13 +249,13 @@ TEST_CASE("serialize and deserialize with stream", "[ut][conjugate_graph]") {
         out_stream.close();
 
         std::fstream in_stream(dir.path + "conjugate_graph.bin", std::ios::in | std::ios::binary);
-        REQUIRE(conjugate_graph->Deserialize(in_stream).error().type ==
-                vsag::ErrorType::READ_ERROR);
+        IOStreamReader reader(in_stream);
+        REQUIRE(conjugate_graph->Deserialize(reader).error().type == vsag::ErrorType::READ_ERROR);
         in_stream.close();
     }
 
     SECTION("failed deserialize and re-serialize") {
-        fixtures::temp_dir dir("conjugate_graph_test_deserialize_on_not_empty_index");
+        fixtures::TempDir dir("conjugate_graph_test_deserialize_on_not_empty_index");
         std::fstream out_stream(dir.path + "conjugate_graph.bin", std::ios::out | std::ios::binary);
         auto serialize_result = conjugate_graph->Serialize(out_stream);
         REQUIRE(serialize_result.has_value());
@@ -258,8 +264,8 @@ TEST_CASE("serialize and deserialize with stream", "[ut][conjugate_graph]") {
         std::filesystem::resize_file(dir.path + "conjugate_graph.bin", 55 + vsag::FOOTER_SIZE);
 
         std::fstream in_stream(dir.path + "conjugate_graph.bin", std::ios::in | std::ios::binary);
-        REQUIRE(conjugate_graph->Deserialize(in_stream).error().type ==
-                vsag::ErrorType::READ_ERROR);
+        IOStreamReader reader(in_stream);
+        REQUIRE(conjugate_graph->Deserialize(reader).error().type == vsag::ErrorType::READ_ERROR);
         in_stream.close();
 
         REQUIRE(conjugate_graph->GetMemoryUsage() == 4 + vsag::FOOTER_SIZE);
@@ -272,8 +278,38 @@ TEST_CASE("serialize and deserialize with stream", "[ut][conjugate_graph]") {
 
         std::fstream re_in_stream(dir.path + "conjugate_graph.bin",
                                   std::ios::in | std::ios::binary);
-        REQUIRE(conjugate_graph->Deserialize(re_in_stream).has_value());
+        IOStreamReader re_reader(re_in_stream);
+        REQUIRE(conjugate_graph->Deserialize(re_reader).has_value());
         REQUIRE(conjugate_graph->GetMemoryUsage() == 4 + vsag::FOOTER_SIZE);
         re_in_stream.close();
     }
+}
+
+TEST_CASE("ConjugateGraph Update ID Test", "[ut][ConjugateGraph]") {
+    auto allocator = vsag::SafeAllocator::FactoryDefaultAllocator();
+    std::shared_ptr<vsag::ConjugateGraph> conjugate_graph =
+        std::make_shared<vsag::ConjugateGraph>(allocator.get());
+
+    REQUIRE(conjugate_graph->AddNeighbor(0, 1) == true);
+    REQUIRE(conjugate_graph->AddNeighbor(0, 2) == true);
+    REQUIRE(conjugate_graph->AddNeighbor(1, 0) == true);
+    REQUIRE(conjugate_graph->AddNeighbor(4, 0) == true);
+
+    // update key
+    REQUIRE(conjugate_graph->UpdateId(1, 1) == true);      // succ case: 1 -> 1
+    REQUIRE(conjugate_graph->UpdateId(5, 4) == false);     // old id don't exist
+    REQUIRE(conjugate_graph->UpdateId(0, 4) == false);     // old id and new id both exists
+    REQUIRE(conjugate_graph->UpdateId(4, 5) == true);      // succ case: 4 -> 5
+    REQUIRE(conjugate_graph->AddNeighbor(5, 0) == false);  // valid of succ case
+
+    // update value
+    REQUIRE(conjugate_graph->UpdateId(2, 3) == true);      // succ case: 2 -> 3
+    REQUIRE(conjugate_graph->AddNeighbor(0, 3) == false);  // neighbor exists
+
+    // update both key and value
+    REQUIRE(conjugate_graph->UpdateId(0, -1) == true);  // succ case: 0 -> -1
+    REQUIRE(conjugate_graph->AddNeighbor(-1, 1) == false);
+    REQUIRE(conjugate_graph->AddNeighbor(-1, 3) == false);
+    REQUIRE(conjugate_graph->AddNeighbor(1, -1) == false);
+    REQUIRE(conjugate_graph->AddNeighbor(5, -1) == false);
 }

@@ -27,36 +27,39 @@
 #include <memory>
 #include <mutex>
 #include <random>
+#include <shared_mutex>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
-#include "../../default_allocator.h"
-#include "../../simd/simd.h"
 #include "algorithm_interface.h"
 #include "block_manager.h"
+#include "data_cell/flatten_interface.h"
+#include "data_cell/graph_interface.h"
+#include "default_allocator.h"
+#include "index/iterator_filter.h"
+#include "prefetch.h"
+#include "simd/simd.h"
 #include "visited_list_pool.h"
-
+#include "vsag/dataset.h"
+#include "vsag/iterator_context.h"
 namespace hnswlib {
-using tableint = unsigned int;
+using InnerIdType = vsag::InnerIdType;
 using linklistsizeint = unsigned int;
-using reverselinklist = std::
-    unordered_set<tableint, std::hash<tableint>, std::equal_to<>, vsag::AllocatorWrapper<tableint>>;
+using reverselinklist = vsag::UnorderedSet<uint32_t>;
 struct CompareByFirst {
     constexpr bool
-    operator()(std::pair<float, tableint> const& a,
-               std::pair<float, tableint> const& b) const noexcept {
+    operator()(std::pair<float, InnerIdType> const& a,
+               std::pair<float, InnerIdType> const& b) const noexcept {
         return a.first < b.first;
     }
 };
-using MaxHeap = std::priority_queue<std::pair<float, tableint>,
-                                    std::vector<std::pair<float, tableint>>,
+using MaxHeap = std::priority_queue<std::pair<float, InnerIdType>,
+                                    vsag::Vector<std::pair<float, InnerIdType>>,
                                     CompareByFirst>;
-const static float THRESHOLD_ERROR = 1e-6;
 
 class HierarchicalNSW : public AlgorithmInterface<float> {
 private:
-    static const tableint MAX_LABEL_OPERATION_LOCKS = 65536;
     static const unsigned char DELETE_MARK = 0x01;
 
     size_t max_elements_ = 0;
@@ -70,75 +73,65 @@ private:
     size_t ef_construction_{0};
     size_t dim_{0};
 
-    double mult_{0.0}, revSize_{0.0};
-    int maxlevel_{0};
+    double mult_{0.0}, rev_size_{0.0};
+    int max_level_{0};
 
     VisitedListPool* visited_list_pool_{nullptr};
 
-    // Locks operations with element by label value
-    mutable std::vector<std::mutex> label_op_locks_{};
+    mutable std::shared_mutex
+        resize_mutex_{};  // Ensures safety during the resize process; is the largest lock.
+    mutable std::shared_mutex
+        max_level_mutex_{};  // Ensures access safety for global max_level and entry point.
+    mutable vsag::Vector<std::shared_mutex>
+        points_locks_;  // Ensures access safety for the link list and label of a specific point.
+    mutable std::shared_mutex
+        label_lookup_lock_{};  // Ensures access safety for the global label lookup table.
 
-    std::mutex global_{};
-    std::vector<std::recursive_mutex> link_list_locks_{};
-
-    tableint enterpoint_node_{0};
+    InnerIdType enterpoint_node_{0};
 
     size_t size_links_level0_{0};
-    size_t offsetData_{0};
+    size_t offset_data_{0};
     size_t offsetLevel0_{0};
     size_t label_offset_{0};
 
     bool normalize_{false};
     float* molds_{nullptr};
 
-    BlockManager* data_level0_memory_{nullptr};
+    std::shared_ptr<BlockManager> data_level0_memory_{nullptr};
     char** link_lists_{nullptr};
     int* element_levels_{nullptr};  // keeps level of each element
 
     bool use_reversed_edges_{false};
     reverselinklist** reversed_level0_link_list_{nullptr};
-    std::unordered_map<int, reverselinklist>** reversed_link_lists_{nullptr};
+    vsag::UnorderedMap<int, reverselinklist>** reversed_link_lists_{nullptr};
 
     size_t data_size_{0};
+    size_t prefetch_jump_code_size_{1};
 
     size_t data_element_per_block_{0};
 
     DISTFUNC fstdistfunc_{nullptr};
     void* dist_func_param_{nullptr};
 
-    mutable std::mutex label_lookup_lock_{};  // lock for label_lookup_
-    std::unordered_map<labeltype, tableint> label_lookup_{};
+    vsag::UnorderedMap<LabelType, InnerIdType> label_lookup_;
 
     std::default_random_engine level_generator_;
-    std::default_random_engine update_probability_generator_;
+    mutable std::default_random_engine update_probability_generator_;
 
     vsag::Allocator* allocator_{nullptr};
-    std::shared_ptr<vsag::AllocatorWrapper<tableint>> reverse_link_list_allocator_{nullptr};
 
     mutable std::atomic<uint64_t> metric_distance_computations_{0};
     mutable std::atomic<uint64_t> metric_hops_{0};
 
-    vsag::DistanceFunc ip_func_{nullptr};
+    vsag::DistanceFuncType ip_func_{nullptr};
 
     // flag to replace deleted elements (marked as deleted) during insertion
     bool allow_replace_deleted_{false};
 
-    std::mutex deleted_elements_lock_{};               // lock for deleted_elements_
-    std::unordered_set<tableint> deleted_elements_{};  // contains internal ids of deleted elements
+    std::mutex deleted_elements_lock_{};                // lock for deleted_elements_
+    vsag::UnorderedSet<InnerIdType> deleted_elements_;  // contains internal ids of deleted elements
 
 public:
-    HierarchicalNSW(SpaceInterface* s) {
-    }
-
-    HierarchicalNSW(SpaceInterface* s,
-                    const std::string& location,
-                    bool nmslib = false,
-                    size_t max_elements = 0,
-                    bool allow_replace_deleted = false)
-        : allow_replace_deleted_(allow_replace_deleted) {
-        loadIndex(location, s, max_elements);
-    }
-
     HierarchicalNSW(SpaceInterface* s,
                     size_t max_elements,
                     vsag::Allocator* allocator,
@@ -156,62 +149,68 @@ public:
     normalizeVector(const void*& data_point, std::shared_ptr<float[]>& normalize_data) const;
 
     float
-    getDistanceByLabel(labeltype label, const void* data_point) override;
+    getDistanceByLabel(LabelType label, const void* data_point) override;
 
+    tl::expected<vsag::DatasetPtr, vsag::Error>
+    getBatchDistanceByLabel(const int64_t* ids, const void* data_point, int64_t count) override;
+    std::pair<int64_t, int64_t>
+    getMinAndMaxId() override;
     bool
-    isValidLabel(labeltype label) override;
+    isValidLabel(LabelType label) override;
 
-    inline std::mutex&
-    getLabelOpMutex(labeltype label) const {
-        // calculate hash
-        size_t lock_id = label & (MAX_LABEL_OPERATION_LOCKS - 1);
-        return label_op_locks_[lock_id];
+    size_t
+    getMaxDegree() {
+        return maxM0_;
+    };
+
+    linklistsizeint*
+    get_linklist0(InnerIdType internal_id) const {
+        // only for test now
+        return (linklistsizeint*)(data_level0_memory_->GetElementPtr(internal_id, offsetLevel0_));
     }
 
-    inline labeltype
-    getExternalLabel(tableint internal_id) const {
-        labeltype value;
+    inline LabelType
+    getExternalLabel(InnerIdType internal_id) const {
+        std::shared_lock lock(points_locks_[internal_id]);
+        LabelType value;
         std::memcpy(&value,
                     data_level0_memory_->GetElementPtr(internal_id, label_offset_),
-                    sizeof(labeltype));
+                    sizeof(LabelType));
         return value;
     }
 
     inline void
-    setExternalLabel(tableint internal_id, labeltype label) const {
-        *(labeltype*)(data_level0_memory_->GetElementPtr(internal_id, label_offset_)) = label;
-    }
-
-    inline labeltype*
-    getExternalLabeLp(tableint internal_id) const {
-        return (labeltype*)(data_level0_memory_->GetElementPtr(internal_id, label_offset_));
+    setExternalLabel(InnerIdType internal_id, LabelType label) const {
+        std::unique_lock lock(points_locks_[internal_id]);
+        std::memcpy(data_level0_memory_->GetElementPtr(internal_id, label_offset_),
+                    &label,
+                    sizeof(LabelType));
     }
 
     inline reverselinklist&
-    getEdges(tableint internal_id, int level = 0) {
+    getEdges(InnerIdType internal_id, int level = 0) {
         if (level != 0) {
             auto& edge_map_ptr = reversed_link_lists_[internal_id];
             if (edge_map_ptr == nullptr) {
-                edge_map_ptr = new std::unordered_map<int, reverselinklist>();
+                edge_map_ptr = new vsag::UnorderedMap<int, reverselinklist>(allocator_);
             }
             auto& edge_map = *edge_map_ptr;
             if (edge_map.find(level) == edge_map.end()) {
-                edge_map.insert(
-                    std::make_pair(level, reverselinklist(*reverse_link_list_allocator_)));
+                edge_map.insert(std::make_pair(level, reverselinklist(allocator_)));
             }
             return edge_map.at(level);
         } else {
             auto& edge_ptr = reversed_level0_link_list_[internal_id];
             if (edge_ptr == nullptr) {
-                edge_ptr = new reverselinklist(*reverse_link_list_allocator_);
+                edge_ptr = new reverselinklist(allocator_);
             }
             return *edge_ptr;
         }
     }
 
     void
-    updateConnections(tableint internal_id,
-                      const std::vector<tableint>& cand_neighbors,
+    updateConnections(InnerIdType internal_id,
+                      const vsag::Vector<InnerIdType>& cand_neighbors,
                       int level,
                       bool is_update);
 
@@ -219,12 +218,14 @@ public:
     checkReverseConnection();
 
     inline char*
-    getDataByInternalId(tableint internal_id) const {
-        return (data_level0_memory_->GetElementPtr(internal_id, offsetData_));
+    getDataByInternalId(InnerIdType internal_id) const {
+        return (data_level0_memory_->GetElementPtr(internal_id, offset_data_));
     }
 
-    std::priority_queue<std::pair<float, labeltype>>
-    bruteForce(const void* data_point, int64_t k) override;
+    std::priority_queue<std::pair<float, LabelType>>
+    bruteForce(const void* data_point,
+               int64_t k,
+               const vsag::FilterPtr is_id_allowed = nullptr) const override;
 
     int
     getRandomLevel(double reverse_size);
@@ -245,46 +246,76 @@ public:
     }
 
     MaxHeap
-    searchBaseLayer(tableint ep_id, const void* data_point, int layer);
+    searchBaseLayer(InnerIdType ep_id, const void* data_point, int layer) const;
 
     template <bool has_deletions, bool collect_metrics = false>
     MaxHeap
-    searchBaseLayerST(tableint ep_id,
+    searchBaseLayerST(InnerIdType ep_id,
                       const void* data_point,
                       size_t ef,
-                      BaseFilterFunctor* isIdAllowed = nullptr) const;
+                      const vsag::FilterPtr is_id_allowed = nullptr,
+                      const float skip_ratio = 0.9f,
+                      vsag::IteratorFilterContext* iter_ctx = nullptr) const;
 
     template <bool has_deletions, bool collect_metrics = false>
     MaxHeap
-    searchBaseLayerST(tableint ep_id,
+    searchBaseLayerST(InnerIdType ep_id,
                       const void* data_point,
                       float radius,
                       int64_t ef,
-                      BaseFilterFunctor* isIdAllowed = nullptr) const;
+                      const vsag::FilterPtr is_id_allowed = nullptr) const;
 
     void
     getNeighborsByHeuristic2(MaxHeap& top_candidates, size_t M);
 
+    void
+    setBatchNeigohbors(InnerIdType internal_id,
+                       int level,
+                       const InnerIdType* neighbors,
+                       size_t neigbor_count);
+
+    void
+    appendNeigohbor(InnerIdType internal_id, int level, InnerIdType neighbor, size_t max_degree);
+
     linklistsizeint*
-    getLinklist0(tableint internal_id) const {
+    getLinklist0(InnerIdType internal_id) const {
         return (linklistsizeint*)(data_level0_memory_->GetElementPtr(internal_id, offsetLevel0_));
     }
 
     linklistsizeint*
-    getLinklist(tableint internal_id, int level) const {
+    getLinklist(InnerIdType internal_id, int level) const {
         return (linklistsizeint*)(link_lists_[internal_id] + (level - 1) * size_links_per_element_);
     }
 
     linklistsizeint*
-    getLinklistAtLevel(tableint internal_id, int level) const {
+    getLinklistAtLevel(InnerIdType internal_id, int level) const {
         return level == 0 ? getLinklist0(internal_id) : getLinklist(internal_id, level);
     }
 
-    tableint
-    mutuallyConnectNewElement(tableint cur_c, MaxHeap& top_candidates, int level, bool isUpdate);
+    inline void
+    getLinklistAtLevel(InnerIdType internal_id, int level, void* neighbors) const {
+        if (level == 0) {
+            std::shared_lock lock(points_locks_[internal_id]);
+            auto src = data_level0_memory_->GetElementPtr(internal_id, offsetLevel0_);
+            std::memcpy(neighbors, src, size_links_level0_);
+        } else {
+            std::shared_lock lock(points_locks_[internal_id]);
+            std::memcpy(neighbors,
+                        link_lists_[internal_id] + (level - 1) * size_links_per_element_,
+                        size_links_per_element_);
+        }
+    }
+
+    InnerIdType
+    mutuallyConnectNewElement(InnerIdType cur_c, MaxHeap& top_candidates, int level, bool isUpdate);
 
     void
     resizeIndex(size_t new_max_elements) override;
+
+    void
+    setDataAndGraph(vsag::FlattenInterfacePtr& data,
+                    vsag::GraphInterfacePtr& graph,
+                    vsag::Vector<LabelType>& ids);
 
     size_t
     calcSerializeSize() override;
@@ -296,63 +327,41 @@ public:
     saveIndex(std::ostream& out_stream) override;
 
     void
-    saveIndex(const std::string& location) override;
-
-    void
     SerializeImpl(StreamWriter& writer);
 
-    // load using reader
     void
-    loadIndex(std::function<void(uint64_t, uint64_t, void*)> read_func,
-              SpaceInterface* s,
-              size_t max_elements_i) override;
-
-    // load index from a file stream
-    void
-    loadIndex(std::istream& in_stream, SpaceInterface* s, size_t max_elements_i) override;
-
-    // origin load function
-    void
-    loadIndex(const std::string& location, SpaceInterface* s, size_t max_elements_i = 0);
+    loadIndex(StreamReader& buffer_reader, SpaceInterface* s, size_t max_elements_i = 0) override;
 
     void
     DeserializeImpl(StreamReader& reader, SpaceInterface* s, size_t max_elements_i = 0);
 
     const float*
-    getDataByLabel(labeltype label) const override;
+    getDataByLabel(LabelType label) const override;
+
+    void
+    copyDataByLabel(LabelType label, void* data_point) override;
+
     /*
     * Marks an element with the given label deleted, does NOT really change the current graph.
     */
     void
-    markDelete(labeltype label);
+    markDelete(LabelType label);
 
     /*
     * Uses the last 16 bits of the memory for the linked list size to store the mark,
     * whereas maxM0_ has to be limited to the lower 16 bits, however, still large enough in almost all cases.
     */
     void
-    markDeletedInternal(tableint internalId);
-
-    /*
-    * Removes the deleted mark of the node, does NOT really change the current graph.
-    *
-    * Note: the method is not safe to use when replacement of deleted elements is enabled,
-    *  because elements marked as deleted can be completely removed by addPoint
-    */
-    void
-    unmarkDelete(labeltype label);
-    /*
-    * Remove the deleted mark of the node.
-    */
-    void
-    unmarkDeletedInternal(tableint internalId);
+    markDeletedInternal(InnerIdType internal_id);
 
     /*
     * Checks the first 16 bits of the memory to see if the element is marked deleted.
     */
     bool
-    isMarkedDeleted(tableint internalId) const {
-        unsigned char* ll_cur = ((unsigned char*)getLinklist0(internalId)) + 2;
+    isMarkedDeleted(InnerIdType internal_id) const {
+        std::shared_ptr<char[]> data = std::shared_ptr<char[]>(new char[size_links_level0_]);
+        getLinklistAtLevel(internal_id, 0, data.get());
+        unsigned char* ll_cur = ((unsigned char*)data.get()) + 2;
         return *ll_cur & DELETE_MARK;
     }
 
@@ -370,39 +379,51 @@ public:
     * Adds point.
     */
     bool
-    addPoint(const void* data_point, labeltype label) override;
+    addPoint(const void* data_point, LabelType label) override;
 
     void
-    modifyOutEdge(tableint old_internal_id, tableint new_internal_id);
+    modifyOutEdge(InnerIdType old_internal_id, InnerIdType new_internal_id);
 
     void
-    modifyInEdges(tableint right_internal_id, tableint wrong_internal_id, bool is_erase);
+    modifyInEdges(InnerIdType right_internal_id, InnerIdType wrong_internal_id, bool is_erase);
 
     bool
-    swapConnections(tableint pre_internal_id, tableint post_internal_id);
+    swapConnections(InnerIdType pre_internal_id, InnerIdType post_internal_id);
 
     void
-    dealNoInEdge(tableint id, int level, int m_curmax, int skip_c);
+    dealNoInEdge(InnerIdType id, int level, int m_curmax, int skip_c);
 
     void
-    removePoint(labeltype label);
+    updateLabel(LabelType old_label, LabelType new_label);
 
-    tableint
-    addPoint(const void* data_point, labeltype label, int level);
+    void
+    updateVector(LabelType label, const void* data_point);
 
-    std::priority_queue<std::pair<float, labeltype>>
+    void
+    removePoint(LabelType label);
+
+    InnerIdType
+    addPoint(const void* data_point, LabelType label, int level);
+
+    std::priority_queue<std::pair<float, LabelType>>
     searchKnn(const void* query_data,
               size_t k,
               uint64_t ef,
-              BaseFilterFunctor* isIdAllowed = nullptr) const override;
+              const vsag::FilterPtr is_id_allowed = nullptr,
+              const float skip_ratio = 0.9f,
+              vsag::IteratorFilterContext* iter_ctx = nullptr,
+              bool is_last_filter = false) const override;
 
-    std::priority_queue<std::pair<float, labeltype>>
+    std::priority_queue<std::pair<float, LabelType>>
     searchRange(const void* query_data,
                 float radius,
                 uint64_t ef,
-                BaseFilterFunctor* isIdAllowed = nullptr) const override;
+                const vsag::FilterPtr is_id_allowed = nullptr) const override;
 
     void
-    checkIntegrity();
+    reset();
+
+    bool
+    init_memory_space() override;
 };
 }  // namespace hnswlib

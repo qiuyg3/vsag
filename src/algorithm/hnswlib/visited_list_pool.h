@@ -18,11 +18,11 @@
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <iostream>
 #include <mutex>
 
 #include "../../default_allocator.h"
 #include "stream_writer.h"
-
 namespace vsag {
 
 extern void*
@@ -41,18 +41,20 @@ typedef unsigned short int vl_type;
 
 class VisitedList {
 public:
-    vl_type curV;
-    vl_type* mass;
-    uint64_t numelements;
+    vl_type curV{0};
+    vl_type* mass{nullptr};
+    uint64_t numelements{0};
 
     VisitedList(uint64_t numelements1, vsag::Allocator* allocator) : allocator_(allocator) {
         curV = -1;
         numelements = numelements1;
-        mass = (vl_type*)allocator_->Allocate(numelements * sizeof(vl_type));
     }
 
     void
     reset() {
+        if (not mass) {
+            mass = (vl_type*)allocator_->Allocate(numelements * sizeof(vl_type));
+        }
         curV++;
         if (curV == 0) {
             memset(mass, 0, sizeof(vl_type) * numelements);
@@ -67,6 +69,8 @@ public:
     vsag::Allocator* allocator_;
 };
 
+using VisitedListPtr = std::shared_ptr<VisitedList>;
+
 ///////////////////////////////////////////////////////////
 //
 // Class for multi-threaded pool-management of VisitedLists
@@ -75,23 +79,20 @@ public:
 
 class VisitedListPool {
 public:
-    VisitedListPool(int initmaxpools, uint64_t numelements1, vsag::Allocator* allocator)
-        : allocator_(allocator) {
-        numelements = numelements1;
-        for (int i = 0; i < initmaxpools; i++)
-            pool.push_front(new VisitedList(numelements, allocator_));
+    VisitedListPool(uint64_t max_element_count, vsag::Allocator* allocator)
+        : allocator_(allocator), pool_(allocator), max_element_count_(max_element_count) {
     }
 
-    VisitedList*
+    VisitedListPtr
     getFreeVisitedList() {
-        VisitedList* rez;
+        VisitedListPtr rez;
         {
-            std::unique_lock<std::mutex> lock(poolguard);
-            if (not pool.empty()) {
-                rez = pool.front();
-                pool.pop_front();
+            std::unique_lock<std::mutex> lock(poolguard_);
+            if (not pool_.empty()) {
+                rez = pool_.front();
+                pool_.pop_front();
             } else {
-                rez = new VisitedList(numelements, allocator_);
+                rez = std::make_shared<VisitedList>(max_element_count_, allocator_);
             }
         }
         rez->reset();
@@ -99,23 +100,15 @@ public:
     }
 
     void
-    releaseVisitedList(VisitedList* vl) {
-        std::unique_lock<std::mutex> lock(poolguard);
-        pool.push_front(vl);
-    }
-
-    ~VisitedListPool() {
-        while (not pool.empty()) {
-            VisitedList* rez = pool.front();
-            pool.pop_front();
-            delete rez;
-        }
+    releaseVisitedList(VisitedListPtr vl) {
+        std::unique_lock<std::mutex> lock(poolguard_);
+        pool_.push_back(vl);
     }
 
 private:
-    std::deque<VisitedList*> pool;
-    std::mutex poolguard;
-    uint64_t numelements;
+    vsag::Deque<VisitedListPtr> pool_;
+    std::mutex poolguard_;
+    uint64_t max_element_count_;
     vsag::Allocator* allocator_;
 };
 

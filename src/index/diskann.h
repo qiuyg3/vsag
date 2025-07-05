@@ -15,12 +15,22 @@
 
 #pragma once
 
-#include <ThreadPool.h>
+// to suppress deprecated warning below(no better way found that works with clang-tidy-15):
+// - clang-diagnostic-deprecated-builtins
+#if defined(__clang__) && (__clang_major__ >= 15)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-builtins"
+#endif
+
 #include <abstract_index.h>
 #include <disk_utils.h>
 #include <index.h>
 #include <omp.h>
 #include <pq_flash_index.h>
+
+#if defined(__clang__) && (__clang_major__ >= 15)
+#pragma clang diagnostic pop
+#endif
 
 #include <functional>
 #include <map>
@@ -29,13 +39,15 @@
 #include <shared_mutex>
 #include <string>
 
-#include "../common.h"
-#include "../logger.h"
-#include "../utils.h"
+#include "common.h"
+#include "diskann_zparameters.h"
+#include "index_feature_list.h"
+#include "logger.h"
+#include "typing.h"
+#include "utils/window_result_queue.h"
 #include "vsag/index.h"
 #include "vsag/options.h"
-
-using ThreadPool = progschj::ThreadPool;
+#include "vsag/thread_pool.h"
 
 namespace vsag {
 
@@ -50,18 +62,7 @@ public:
     // offset: uint64, len: uint64, dest: void*
     using read_request = std::tuple<uint64_t, uint64_t, void*>;
 
-    DiskANN(diskann::Metric metric,
-            std::string data_type,
-            int L,
-            int R,
-            float p_val,
-            size_t disk_pq_dims,
-            int64_t dim,
-            bool preload,
-            bool use_reference = true,
-            bool use_opq = false,
-            bool use_bsa = false,
-            bool use_async_io = false);
+    DiskANN(DiskannParameters& diskann_params, const IndexCommonParam& index_common_param);
 
     ~DiskANN() = default;
 
@@ -160,6 +161,9 @@ public:
     std::string
     GetStats() const override;
 
+    bool
+    CheckFeature(IndexFeature feature) const override;
+
 private:
     tl::expected<std::vector<int64_t>, Error>
     build(const DatasetPtr& base);
@@ -171,7 +175,7 @@ private:
     knn_search(const DatasetPtr& query,
                int64_t k,
                const std::string& parameters,
-               BitsetPtr invalid) const;
+               const BitsetPtr& invalid) const;
 
     tl::expected<DatasetPtr, Error>
     knn_search(const DatasetPtr& query,
@@ -190,7 +194,7 @@ private:
     range_search(const DatasetPtr& query,
                  float radius,
                  const std::string& parameters,
-                 BitsetPtr invalid,
+                 const BitsetPtr& invalid,
                  int64_t limited_size) const;
 
     tl::expected<BinarySet, Error>
@@ -211,8 +215,8 @@ private:
     tl::expected<void, Error>
     load_disk_index(const BinarySet& binary_set);
 
-    BinarySet
-    empty_binaryset() const;
+    void
+    init_feature_list();
 
 private:
     std::shared_ptr<LocalFileReader> reader_;
@@ -224,10 +228,13 @@ private:
     std::stringstream tag_stream_;
     std::stringstream graph_stream_;
 
+    const IndexCommonParam index_common_param_;
+
+    IndexFeatureListPtr feature_list_{nullptr};
+
     std::function<void(const std::vector<read_request>&, bool, CallBack)> batch_read_;
     diskann::Metric metric_;
     std::shared_ptr<Reader> disk_layout_reader_;
-    std::string data_type_;
 
     int L_ = 200;
     int R_ = 64;
@@ -241,16 +248,17 @@ private:
     bool use_reference_ = true;
     bool use_opq_ = false;
     bool use_bsa_ = false;
-    bool use_async_io_ = false;
     bool preload_;
     IndexStatus status_;
     bool empty_index_ = false;
 
     mutable std::shared_mutex rw_mutex_;
 
+    IndexCommonParam common_param_;
+    DiskannParameters diskann_params_;
+
 private:  // Request Statistics
     mutable std::mutex stats_mutex_;
-    std::unique_ptr<ThreadPool> pool_;
 
     mutable std::map<std::string, WindowResultQueue> result_queues_;
 };

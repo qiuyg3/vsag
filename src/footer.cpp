@@ -52,11 +52,10 @@ SerializationFooter::SetMetadata(const std::string& key, const std::string& valu
 std::string
 SerializationFooter::GetMetadata(const std::string& key) const {
     auto iter = json_.find(key);
-    if (iter != json_.end()) {
-        return iter->get<std::string>();
-    } else {
+    if (iter == json_.end()) {
         throw std::runtime_error(fmt::format("Footer doesn't contain key ({})", key));
     }
+    return iter->get<std::string>();
 }
 
 void
@@ -78,24 +77,21 @@ SerializationFooter::Serialize(std::ostream& out_stream) const {
 }
 
 void
-SerializationFooter::Deserialize(std::istream& in_stream) {
+SerializationFooter::Deserialize(StreamReader& in_stream) {
     // read json size
     uint32_t serialized_data_size;
-    in_stream.read(reinterpret_cast<char*>(&serialized_data_size), sizeof(serialized_data_size));
+    in_stream.Read(reinterpret_cast<char*>(&serialized_data_size), sizeof(serialized_data_size));
     if (serialized_data_size > FOOTER_SIZE - sizeof(uint32_t)) {
         throw std::runtime_error("Serialized footer size exceeds 4KB");
     }
 
     // read footer
     std::vector<char> buffer(FOOTER_SIZE - sizeof(uint32_t));
-    in_stream.read(buffer.data(), FOOTER_SIZE - sizeof(uint32_t));
-    if (in_stream.fail()) {
-        throw std::runtime_error("Failed to read");
-    }
+    in_stream.Read(buffer.data(), FOOTER_SIZE - sizeof(uint32_t));
 
     // parse json
     std::string serialized_data(buffer.begin(), buffer.begin() + FOOTER_SIZE - sizeof(uint32_t));
-    json_ = nlohmann::json::parse(serialized_data, nullptr, false);
+    json_ = JsonType::parse(serialized_data, nullptr, false);
     if (json_.is_discarded()) {
         throw std::runtime_error("Failed to parse JSON data");
     }

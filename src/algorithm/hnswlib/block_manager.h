@@ -28,10 +28,7 @@ namespace hnswlib {
 
 class BlockManager {
 public:
-    BlockManager(size_t max_elements,
-                 size_t size_data_per_element,
-                 size_t block_size_limit,
-                 vsag::Allocator* allocator);
+    BlockManager(size_t size_data_per_element, size_t block_size_limit, vsag::Allocator* allocator);
 
     ~BlockManager();
 
@@ -46,11 +43,6 @@ public:
 
     bool
     Serialize(std::ostream& ofs, size_t cur_element_count);
-
-    bool
-    Deserialize(std::function<void(uint64_t, uint64_t, void*)> read_func,
-                uint64_t cursor,
-                size_t cur_element_count);
 
     bool
     Deserialize(std::istream& ifs, size_t cur_element_count);

@@ -13,26 +13,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <cpuinfo.h>
+#include "simd.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <iostream>
 #include <random>
 
-#include "vsag/vsag.h"
-
 namespace vsag {
 
 typedef float (*DistanceFunc)(const void* pVect1, const void* pVect2, const void* qty_ptr);
-extern DistanceFunc
-GetInnerProductDistanceFunc(size_t dim);
 extern DistanceFunc
 GetL2DistanceFunc(size_t dim);
 
 }  // namespace vsag
 
 float
-L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
+L2SqrGT(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
     float* pVect1 = (float*)pVect1v;
     float* pVect2 = (float*)pVect2v;
     size_t qty = *((size_t*)qty_ptr);
@@ -48,7 +44,7 @@ L2Sqr(const void* pVect1v, const void* pVect2v, const void* qty_ptr) {
 }
 
 float
-InnerProductDistance(const void* pVect1, const void* pVect2, const void* qty_ptr) {
+InnerProductDistanceGT(const void* pVect1, const void* pVect2, const void* qty_ptr) {
     size_t qty = *((size_t*)qty_ptr);
     float res = 0;
     for (unsigned i = 0; i < qty; i++) {
@@ -57,7 +53,7 @@ InnerProductDistance(const void* pVect1, const void* pVect2, const void* qty_ptr
     return 1 - res;
 }
 
-TEST_CASE("test ip instructions", "[ut][simd]") {
+TEST_CASE("Test InnerProduct Instructions", "[ut][simd]") {
     std::random_device rd;
     std::mt19937 rng(rd());
     for (size_t dim = 1; dim < 1026; dim++) {
@@ -68,14 +64,13 @@ TEST_CASE("test ip instructions", "[ut][simd]") {
             vector1[j] = distrib_real(rng);
             vector2[j] = distrib_real(rng);
         }
-        auto distance_func = vsag::GetInnerProductDistanceFunc(dim);
-        bool equal = (std::abs(InnerProductDistance(vector1, vector2, &dim) -
-                               distance_func(vector1, vector2, &dim)) < 0.001);
+        bool equal = (std::abs(vsag::InnerProductDistance(vector1, vector2, &dim) -
+                               InnerProductDistanceGT(vector1, vector2, &dim)) < 0.001);
         REQUIRE(equal);
     }
 }
 
-TEST_CASE("test l2 instructions", "[ut][simd]") {
+TEST_CASE("Test L2 Instructions", "[ut][simd]") {
     std::random_device rd;
     std::mt19937 rng(rd());
     for (size_t dim = 1; dim < 1026; dim++) {
@@ -86,9 +81,8 @@ TEST_CASE("test l2 instructions", "[ut][simd]") {
             vector1[j] = distrib_real(rng);
             vector2[j] = distrib_real(rng);
         }
-        auto distance_func = vsag::GetL2DistanceFunc(dim);
-        bool equal = (std::abs(L2Sqr(vector1, vector2, &dim) -
-                               distance_func(vector1, vector2, &dim)) < 0.001);
+        bool equal = (std::abs(L2SqrGT(vector1, vector2, &dim) -
+                               vsag::L2Sqr(vector1, vector2, &dim)) < 0.001);
         REQUIRE(equal);
     }
 }

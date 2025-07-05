@@ -17,18 +17,44 @@
 
 #include "index/diskann_zparameters.h"
 #include "index/hnsw_zparameters.h"
-#include "utils.h"
+#include "resource_owner_wrapper.h"
+#include "utils/util_functions.h"
+#include "vsag/constants.h"
 #include "vsag/errors.h"
 #include "vsag/expected.hpp"
+#include "vsag_exception.h"
 
 namespace vsag {
 
 tl::expected<bool, Error>
 check_diskann_hnsw_build_parameters(const std::string& json_string) {
-    if (auto ret = try_parse_parameters<CreateHnswParameters>(json_string); not ret.has_value()) {
+    JsonType parsed_params = JsonType::parse(json_string);
+    std::shared_ptr<vsag::Resource> resource =
+        std::make_shared<vsag::ResourceOwnerWrapper>(new vsag::Resource(), true);
+
+    IndexCommonParam index_common_params;
+    try {
+        index_common_params = IndexCommonParam::CheckAndCreate(parsed_params, resource);
+    } catch (const VsagException& e) {
+        return tl::unexpected<Error>(e.error_);
+    }
+
+    if (not parsed_params.contains(INDEX_HNSW)) {
+        LOG_ERROR_AND_RETURNS(ErrorType::INVALID_ARGUMENT,
+                              fmt::format("parameters must contains {}", INDEX_HNSW));
+    }
+
+    if (not parsed_params.contains(INDEX_DISKANN)) {
+        LOG_ERROR_AND_RETURNS(ErrorType::INVALID_ARGUMENT,
+                              fmt::format("parameters must contains {}", INDEX_DISKANN));
+    }
+    if (auto ret =
+            try_parse_parameters<HnswParameters>(parsed_params[INDEX_HNSW], index_common_params);
+        not ret.has_value()) {
         return tl::unexpected(ret.error());
     }
-    if (auto ret = try_parse_parameters<CreateDiskannParameters>(json_string);
+    if (auto ret = try_parse_parameters<DiskannParameters>(parsed_params[INDEX_DISKANN],
+                                                           index_common_params);
         not ret.has_value()) {
         return tl::unexpected(ret.error());
     }

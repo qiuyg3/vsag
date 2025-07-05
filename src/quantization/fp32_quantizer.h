@@ -17,15 +17,25 @@
 #include <cstdint>
 #include <cstring>
 
+#include "fp32_quantizer_parameter.h"
+#include "index/index_common_param.h"
+#include "inner_string_params.h"
+#include "nlohmann/json.hpp"
 #include "quantizer.h"
+#include "simd/fp32_simd.h"
+#include "simd/normalize.h"
 #include "simd/simd.h"
 
 namespace vsag {
 
-template <MetricType Metric = MetricType::METRIC_TYPE_L2SQR>
-class FP32Quantizer : public Quantizer<FP32Quantizer<Metric>> {
+template <MetricType metric = MetricType::METRIC_TYPE_L2SQR>
+class FP32Quantizer : public Quantizer<FP32Quantizer<metric>> {
 public:
-    explicit FP32Quantizer(int dim);
+    explicit FP32Quantizer(int dim, Allocator* allocator);
+
+    FP32Quantizer(const FP32QuantizerParamPtr& param, const IndexCommonParam& common_param);
+
+    FP32Quantizer(const QuantizerParamPtr& param, const IndexCommonParam& common_param);
 
     ~FP32Quantizer() = default;
 
@@ -47,94 +57,165 @@ public:
     float
     ComputeImpl(const uint8_t* codes1, const uint8_t* codes2);
 
-    inline void
-    ProcessQueryImpl(const DataType* query, Computer<FP32Quantizer<Metric>>& computer) const;
+    void
+    SerializeImpl(StreamWriter& writer){};
+
+    void
+    DeserializeImpl(StreamReader& reader){};
 
     inline void
-    ComputeDistImpl(Computer<FP32Quantizer<Metric>>& computer,
+    ProcessQueryImpl(const DataType* query, Computer<FP32Quantizer<metric>>& computer) const;
+
+    inline void
+    ComputeDistImpl(Computer<FP32Quantizer<metric>>& computer,
                     const uint8_t* codes,
                     float* dists) const;
+
+    inline void
+    ComputeBatchDistImpl(Computer<FP32Quantizer<metric>>& computer,
+                         uint64_t count,
+                         const uint8_t* codes,
+                         float* dists) const;
+
+    inline void
+    ReleaseComputerImpl(Computer<FP32Quantizer<metric>>& computer) const;
+
+    [[nodiscard]] std::string
+    NameImpl() const {
+        return QUANTIZATION_TYPE_VALUE_FP32;
+    }
 };
 
-template <MetricType Metric>
-FP32Quantizer<Metric>::FP32Quantizer(int dim) : Quantizer<FP32Quantizer<Metric>>(dim) {
-    this->codeSize_ = dim * sizeof(float);
+template <MetricType metric>
+FP32Quantizer<metric>::FP32Quantizer(int dim, Allocator* allocator)
+    : Quantizer<FP32Quantizer<metric>>(dim, allocator) {
+    this->code_size_ = dim * sizeof(float);
 }
 
-template <MetricType Metric>
+template <MetricType metric>
+FP32Quantizer<metric>::FP32Quantizer(const FP32QuantizerParamPtr& param,
+                                     const IndexCommonParam& common_param)
+    : FP32Quantizer<metric>(common_param.dim_, common_param.allocator_.get()) {
+}
+
+template <MetricType metric>
+FP32Quantizer<metric>::FP32Quantizer(const QuantizerParamPtr& param,
+                                     const IndexCommonParam& common_param)
+    : FP32Quantizer<metric>(std::dynamic_pointer_cast<FP32QuantizerParameter>(param),
+                            common_param) {
+}
+
+template <MetricType metric>
 bool
-FP32Quantizer<Metric>::TrainImpl(const DataType* data, uint64_t count) {
-    this->isTrained_ = true;
+FP32Quantizer<metric>::TrainImpl(const DataType* data, uint64_t count) {
+    this->is_trained_ = true;
     return true;
 }
 
-template <MetricType Metric>
+template <MetricType metric>
 bool
-FP32Quantizer<Metric>::EncodeOneImpl(const DataType* data, uint8_t* codes) {
-    memcpy(codes, data, this->codeSize_);
-    return true;
-}
-
-template <MetricType Metric>
-bool
-FP32Quantizer<Metric>::EncodeBatchImpl(const DataType* data, uint8_t* codes, uint64_t count) {
-    for (uint64_t i = 0; i < count; ++i) {
-        memcpy(codes + i * this->codeSize_, data + i * this->dim_, this->codeSize_);
-    }
-    return true;
-}
-
-template <MetricType Metric>
-bool
-FP32Quantizer<Metric>::DecodeOneImpl(const uint8_t* codes, DataType* data) {
-    memcpy(data, codes, this->codeSize_);
-    return true;
-}
-
-template <MetricType Metric>
-bool
-FP32Quantizer<Metric>::DecodeBatchImpl(const uint8_t* codes, DataType* data, uint64_t count) {
-    for (uint64_t i = 0; i < count; ++i) {
-        memcpy(data + i * this->dim_, codes + i * this->codeSize_, this->codeSize_);
-    }
-    return true;
-}
-
-template <MetricType Metric>
-float
-FP32Quantizer<Metric>::ComputeImpl(const uint8_t* codes1, const uint8_t* codes2) {
-    if (Metric == MetricType::METRIC_TYPE_IP) {
-        return InnerProduct(codes1, codes2, &this->dim_);
-    } else if (Metric == MetricType::METRIC_TYPE_L2SQR) {
-        return L2Sqr(codes1, codes2, &this->dim_);
-    } else if (Metric == MetricType::METRIC_TYPE_COSINE) {
-        return InnerProduct(codes1, codes2, &this->dim_);  // TODO
+FP32Quantizer<metric>::EncodeOneImpl(const DataType* data, uint8_t* codes) {
+    if constexpr (metric == MetricType::METRIC_TYPE_COSINE) {
+        Normalize(data, reinterpret_cast<float*>(codes), this->dim_);
     } else {
-        return 0.;
+        memcpy(codes, data, this->code_size_);
+    }
+    return true;
+}
+
+template <MetricType metric>
+bool
+FP32Quantizer<metric>::EncodeBatchImpl(const DataType* data, uint8_t* codes, uint64_t count) {
+    for (uint64_t i = 0; i < count; ++i) {
+        EncodeOneImpl(data + i * this->dim_, codes + i * this->code_size_);
+    }
+    return true;
+}
+
+template <MetricType metric>
+bool
+FP32Quantizer<metric>::DecodeOneImpl(const uint8_t* codes, DataType* data) {
+    memcpy(data, codes, this->code_size_);
+    return true;
+}
+
+template <MetricType metric>
+bool
+FP32Quantizer<metric>::DecodeBatchImpl(const uint8_t* codes, DataType* data, uint64_t count) {
+    for (uint64_t i = 0; i < count; ++i) {
+        memcpy(data + i * this->dim_, codes + i * this->code_size_, this->code_size_);
+    }
+    return true;
+}
+
+template <MetricType metric>
+float
+FP32Quantizer<metric>::ComputeImpl(const uint8_t* codes1, const uint8_t* codes2) {
+    if (metric == MetricType::METRIC_TYPE_IP or metric == MetricType::METRIC_TYPE_COSINE) {
+        return 1 - FP32ComputeIP(reinterpret_cast<const float*>(codes1),
+                                 reinterpret_cast<const float*>(codes2),
+                                 this->dim_);
+    } else if (metric == MetricType::METRIC_TYPE_L2SQR) {
+        return FP32ComputeL2Sqr(reinterpret_cast<const float*>(codes1),
+                                reinterpret_cast<const float*>(codes2),
+                                this->dim_);
+    } else {
+        return 0.0f;
     }
 }
 
-template <MetricType Metric>
+template <MetricType metric>
 void
-FP32Quantizer<Metric>::ProcessQueryImpl(const DataType* query,
-                                        Computer<FP32Quantizer<Metric>>& computer) const {
-    computer.buf_ = new uint8_t[this->codeSize_];
-    memcpy(computer.buf_, query, this->codeSize_);
+FP32Quantizer<metric>::ComputeBatchDistImpl(Computer<FP32Quantizer<metric>>& computer,
+                                            uint64_t count,
+                                            const uint8_t* codes,
+                                            float* dists) const {
+    // TODO(LHT): Optimize batch for simd
+    for (uint64_t i = 0; i < count; ++i) {
+        this->ComputeDistImpl(computer, codes + i * this->code_size_, dists + i);
+    }
 }
 
-template <MetricType Metric>
+template <MetricType metric>
 void
-FP32Quantizer<Metric>::ComputeDistImpl(Computer<FP32Quantizer<Metric>>& computer,
+FP32Quantizer<metric>::ProcessQueryImpl(const DataType* query,
+                                        Computer<FP32Quantizer<metric>>& computer) const {
+    try {
+        computer.buf_ = reinterpret_cast<uint8_t*>(this->allocator_->Allocate(this->code_size_));
+    } catch (const std::bad_alloc& e) {
+        computer.buf_ = nullptr;
+        logger::error("bad alloc when init computer buf");
+        throw std::bad_alloc();
+    }
+    if constexpr (metric == MetricType::METRIC_TYPE_COSINE) {
+        Normalize(query, reinterpret_cast<float*>(computer.buf_), this->dim_);
+    } else {
+        memcpy(computer.buf_, query, this->code_size_);
+    }
+}
+
+template <MetricType metric>
+void
+FP32Quantizer<metric>::ComputeDistImpl(Computer<FP32Quantizer<metric>>& computer,
                                        const uint8_t* codes,
                                        float* dists) const {
-    if (Metric == MetricType::METRIC_TYPE_IP) {
-        *dists = InnerProduct(codes, computer.buf_, &this->dim_);
-    } else if (Metric == MetricType::METRIC_TYPE_L2SQR) {
-        *dists = L2Sqr(codes, computer.buf_, &this->dim_);
-    } else if (Metric == MetricType::METRIC_TYPE_COSINE) {
-        *dists = InnerProduct(codes, computer.buf_, &this->dim_);  // TODO
+    if (metric == MetricType::METRIC_TYPE_IP or metric == MetricType::METRIC_TYPE_COSINE) {
+        *dists = 1 - FP32ComputeIP(reinterpret_cast<const float*>(codes),
+                                   reinterpret_cast<const float*>(computer.buf_),
+                                   this->dim_);
+    } else if (metric == MetricType::METRIC_TYPE_L2SQR) {
+        *dists = FP32ComputeL2Sqr(reinterpret_cast<const float*>(codes),
+                                  reinterpret_cast<const float*>(computer.buf_),
+                                  this->dim_);
     } else {
-        *dists = 0.;
+        *dists = 0.0f;
     }
 }
+
+template <MetricType metric>
+void
+FP32Quantizer<metric>::ReleaseComputerImpl(Computer<FP32Quantizer<metric>>& computer) const {
+    this->allocator_->Deallocate(computer.buf_);
+}
+
 }  // namespace vsag

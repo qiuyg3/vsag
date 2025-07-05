@@ -19,38 +19,38 @@
 #include <string>
 
 #include "../algorithm/hnswlib/hnswlib.h"
+#include "../data_type.h"
+#include "index_common_param.h"
 
 namespace vsag {
 
-struct CreateHnswParameters {
+struct HnswParameters {
 public:
-    static CreateHnswParameters
-    FromJson(const std::string& json_string);
+    static HnswParameters
+    FromJson(JsonType& hnsw_param_obj, const IndexCommonParam& index_common_param);
 
 public:
     // required vars
     std::shared_ptr<hnswlib::SpaceInterface> space;
     int64_t max_degree;
     int64_t ef_construction;
-    bool use_conjugate_graph;
-    bool use_static;
-    bool normalize = false;
+    bool use_conjugate_graph{false};
+    bool use_static{false};
+    bool normalize{false};
+    bool use_reversed_edges{false};
+    DataTypes type{DataTypes::DATA_TYPE_FLOAT};
 
 protected:
-    CreateHnswParameters() = default;
+    HnswParameters() = default;
 };
 
-struct CreateFreshHnswParameters : public CreateHnswParameters {
+struct FreshHnswParameters : public HnswParameters {
 public:
-    static CreateFreshHnswParameters
-    FromJson(const std::string& json_string);
-
-public:
-    // required vars
-    bool use_reversed_edges;
+    static HnswParameters
+    FromJson(JsonType& hnsw_param_obj, const IndexCommonParam& index_common_param);
 
 private:
-    CreateFreshHnswParameters() = default;
+    FreshHnswParameters() = default;
 };
 
 struct HnswSearchParameters {
@@ -61,6 +61,7 @@ public:
 public:
     // required vars
     int64_t ef_search;
+    float skip_ratio{0.9};
     bool use_conjugate_graph_search;
 
 private:

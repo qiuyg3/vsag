@@ -18,34 +18,20 @@
 #include <catch2/catch_test_macros.hpp>
 #include <memory>
 
-#include "default_allocator.h"
-#include "fixtures.h"
+#include "basic_io_test.h"
+#include "safe_allocator.h"
+
 using namespace vsag;
 
-template <typename T>
-void
-TestReadWrite(BasicIO<T>* basicIo) {
-    int dim = 32;
-    auto vector = fixtures::generate_vectors(100, dim);
-    auto code_size = dim * sizeof(float);
-    std::unordered_map<uint64_t, float*> maps;
-    for (int i = 0; i < 100; ++i) {
-        auto offset = random() % 10000000 * code_size;
-        basicIo->Write((uint8_t*)(vector.data() + i * dim), code_size, offset);
-        maps[offset] = vector.data() + i * dim;
-    }
-
-    for (auto& iter : maps) {
-        const auto* result = (const float*)(basicIo->Read(code_size, iter.first));
-        auto* gt = iter.second;
-        for (int i = 0; i < dim; ++i) {
-            REQUIRE(result[i] == gt[i]);
-        }
-    }
+TEST_CASE("MemoryIO Read and Write", "[ut][MemoryIO]") {
+    auto allocator = SafeAllocator::FactoryDefaultAllocator();
+    auto io = std::make_unique<MemoryIO>(allocator.get());
+    TestBasicReadWrite(*io);
 }
 
-TEST_CASE("read&write[ut][memory_io]") {
-    auto allocator = std::make_unique<DefaultAllocator>();
-    auto io = std::make_unique<MemoryIO>(allocator.get());
-    TestReadWrite(io.get());
+TEST_CASE("MemoryIO Serialize and Deserialize", "[ut][MemoryIO]") {
+    auto allocator = SafeAllocator::FactoryDefaultAllocator();
+    auto wio = std::make_unique<MemoryIO>(allocator.get());
+    auto rio = std::make_unique<MemoryIO>(allocator.get());
+    TestSerializeAndDeserialize(*wio, *rio);
 }

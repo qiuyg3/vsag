@@ -15,15 +15,28 @@
 
 #pragma once
 
+#include <memory>
 #include <new>
 
+#include "default_allocator.h"
 #include "vsag/allocator.h"
 
 namespace vsag {
 
 class SafeAllocator : public Allocator {
 public:
-    explicit SafeAllocator(Allocator* raw_allocator) : raw_allocator_(raw_allocator) {
+    static std::shared_ptr<Allocator>
+    FactoryDefaultAllocator() {
+        return std::make_shared<SafeAllocator>(new DefaultAllocator(), true);
+    }
+
+public:
+    explicit SafeAllocator(Allocator* raw_allocator, bool owned = false)
+        : raw_allocator_(raw_allocator), owned_(owned) {
+    }
+
+    explicit SafeAllocator(const std::shared_ptr<Allocator>& raw_allocator)
+        : raw_allocator_shared_(raw_allocator), raw_allocator_(raw_allocator.get()) {
     }
 
     std::string
@@ -53,12 +66,24 @@ public:
         }
         return ret;
     }
+    Allocator*
+    GetRawAllocator() {
+        return raw_allocator_;
+    }
 
 public:
-    virtual ~SafeAllocator() = default;
+    ~SafeAllocator() override {
+        if (owned_) {
+            delete raw_allocator_;
+        }
+    }
 
 private:
-    Allocator* raw_allocator_ = nullptr;
+    Allocator* const raw_allocator_ = nullptr;
+
+    std::shared_ptr<Allocator> const raw_allocator_shared_;
+
+    bool owned_{false};
 };
 
 }  // namespace vsag

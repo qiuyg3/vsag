@@ -30,12 +30,17 @@
 namespace vsag {
 
 class DatasetImpl : public Dataset {
-    using var = std::variant<int64_t, const float*, const int8_t*, const int64_t*>;
+    using var = std::variant<int64_t,
+                             const float*,
+                             const int8_t*,
+                             const int64_t*,
+                             const std::string*,
+                             const SparseVector*>;
 
 public:
     DatasetImpl() = default;
 
-    ~DatasetImpl() {
+    ~DatasetImpl() override {
         if (not owner_) {
             return;
         }
@@ -45,11 +50,32 @@ public:
             allocator_->Deallocate((void*)this->GetDistances());
             allocator_->Deallocate((void*)this->GetInt8Vectors());
             allocator_->Deallocate((void*)this->GetFloat32Vectors());
+            allocator_->Deallocate((void*)this->GetPaths());
+            allocator_->Deallocate((void*)this->GetExtraInfos());
+
+            if (this->GetSparseVectors()) {
+                for (int i = 0; i < this->GetNumElements(); i++) {
+                    allocator_->Deallocate((void*)this->GetSparseVectors()[i].ids_);
+                    allocator_->Deallocate((void*)this->GetSparseVectors()[i].vals_);
+                }
+                allocator_->Deallocate((void*)this->GetSparseVectors());
+            }
+
         } else {
             delete[] this->GetIds();
             delete[] this->GetDistances();
             delete[] this->GetInt8Vectors();
             delete[] this->GetFloat32Vectors();
+            delete[] this->GetPaths();
+            delete[] this->GetExtraInfos();
+
+            if (this->GetSparseVectors()) {
+                for (int i = 0; i < this->GetNumElements(); i++) {
+                    delete[] this->GetSparseVectors()[i].ids_;
+                    delete[] this->GetSparseVectors()[i].vals_;
+                }
+                delete[] this->GetSparseVectors();
+            }
         }
     }
 
@@ -65,7 +91,7 @@ public:
     }
 
     DatasetPtr
-    Owner(bool is_owner, Allocator* allocator = nullptr) override {
+    Owner(bool is_owner, Allocator* allocator) override {
         this->owner_ = is_owner;
         this->allocator_ = allocator;
         return shared_from_this();
@@ -73,7 +99,7 @@ public:
 
 public:
     DatasetPtr
-    NumElements(const int64_t num_elements) override {
+    NumElements(int64_t num_elements) override {
         this->data_[NUM_ELEMENTS] = num_elements;
         return shared_from_this();
     }
@@ -88,7 +114,7 @@ public:
     }
 
     DatasetPtr
-    Dim(const int64_t dim) override {
+    Dim(int64_t dim) override {
         this->data_[DIM] = dim;
         return shared_from_this();
     }
@@ -161,6 +187,66 @@ public:
 
         return nullptr;
     }
+
+    DatasetPtr
+    SparseVectors(const SparseVector* sparse_vectors) override {
+        this->data_[SPARSE_VECTORS] = sparse_vectors;
+        return shared_from_this();
+    }
+
+    const SparseVector*
+    GetSparseVectors() const override {
+        if (auto iter = this->data_.find(SPARSE_VECTORS); iter != this->data_.end()) {
+            return std::get<const SparseVector*>(iter->second);
+        }
+
+        return nullptr;
+    }
+
+    DatasetPtr
+    Paths(const std::string* paths) override {
+        this->data_[DATASET_PATHS] = paths;
+        return shared_from_this();
+    }
+
+    const std::string*
+    GetPaths() const override {
+        if (auto iter = this->data_.find(DATASET_PATHS); iter != this->data_.end()) {
+            return std::get<const std::string*>(iter->second);
+        }
+        return nullptr;
+    }
+
+    DatasetPtr
+    ExtraInfos(const char* extra_info) override {
+        this->data_[EXTRA_INFOS] = reinterpret_cast<const int64_t*>(extra_info);
+        return shared_from_this();
+    }
+
+    const char*
+    GetExtraInfos() const override {
+        if (auto iter = this->data_.find(EXTRA_INFOS); iter != this->data_.end()) {
+            return reinterpret_cast<const char*>(std::get<const int64_t*>(iter->second));
+        }
+        return nullptr;
+    }
+
+    DatasetPtr
+    ExtraInfoSize(int64_t extra_info_size) override {
+        this->data_[EXTRA_INFO_SIZE] = extra_info_size;
+        return shared_from_this();
+    }
+
+    int64_t
+    GetExtraInfoSize() const override {
+        if (auto iter = this->data_.find(EXTRA_INFO_SIZE); iter != this->data_.end()) {
+            return std::get<int64_t>(iter->second);
+        }
+        return 0;
+    }
+
+    static DatasetPtr
+    MakeEmptyDataset();
 
 private:
     bool owner_ = true;

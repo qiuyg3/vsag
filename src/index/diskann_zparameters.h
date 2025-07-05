@@ -15,26 +15,27 @@
 
 #pragma once
 
+#include <distance.h>
+
 #include <string>
 
-#include "diskann.h"
+#include "index_common_param.h"
 
 namespace vsag {
 
-struct CreateDiskannParameters {
+struct DiskannParameters {
 public:
-    static CreateDiskannParameters
-    FromJson(const std::string& json_string);
+    static DiskannParameters
+    FromJson(JsonType& diskann_param_obj, const IndexCommonParam& index_common_param);
 
 public:
     // require vars
-    int64_t dim;
-    std::string dtype;
-    diskann::Metric metric;
-    int64_t max_degree;
-    int64_t ef_construction;
-    int64_t pq_dims;
-    float pq_sample_rate;
+    int64_t dim{-1};
+    diskann::Metric metric{diskann::Metric::L2};
+    int64_t max_degree{-1};
+    int64_t ef_construction{-1};
+    int64_t pq_dims{-1};
+    float pq_sample_rate{.0f};
 
     // optional vars with default value
     bool use_preload = false;
@@ -43,8 +44,14 @@ public:
     bool use_bsa = false;
     bool use_async_io = false;
 
+    // use new construction method
+    std::string graph_type = "vamana";
+    float alpha = 1.2;
+    int64_t turn = 40;
+    float sample_rate = 0.3;
+
 private:
-    CreateDiskannParameters() = default;
+    DiskannParameters() = default;
 };
 
 struct DiskannSearchParameters {
@@ -54,12 +61,13 @@ public:
 
 public:
     // required vars
-    int64_t ef_search;
-    uint64_t beam_search;
-    int64_t io_limit;
+    int64_t ef_search{-1};
+    uint64_t beam_search{0};
+    int64_t io_limit{-1};
 
     // optional vars with default value
     bool use_reorder = false;
+    bool use_async_io = false;
 
 private:
     DiskannSearchParameters() = default;

@@ -13,10 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "./bitset_impl.h"
+#include "bitset_impl.h"
 
 #include <cstdint>
-#include <cstring>
 #include <functional>
 #include <mutex>
 #include <random>
@@ -28,9 +27,10 @@ BitsetPtr
 Bitset::Random(int64_t length) {
     auto bitset = std::make_shared<BitsetImpl>();
     static auto gen =
-        std::bind(std::uniform_int_distribution<>(0, 1), std::default_random_engine());
+        std::bind(std::uniform_int_distribution<>(0, 1),  // NOLINT(modernize-avoid-bind)
+                  std::default_random_engine());
     for (int64_t i = 0; i < length; ++i) {
-        bitset->Set(i, gen());
+        bitset->Set(i, gen() != 0);
     }
     return bitset;
 }

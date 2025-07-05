@@ -15,17 +15,29 @@
 
 #include "vsag/constants.h"
 
+#include "inner_string_params.h"
 namespace vsag {
 
+const char* const INDEX_HGRAPH = "hgraph";
 const char* const INDEX_DISKANN = "diskann";
 const char* const INDEX_HNSW = "hnsw";
 const char* const INDEX_FRESH_HNSW = "fresh_hnsw";
+const char* const INDEX_PYRAMID = "pyramid";
+const char* const INDEX_SPARSE = "sparse_index";
+const char* const INDEX_BRUTE_FORCE = "brute_force";
+const char* const INDEX_IVF = "ivf";
+
 const char* const DIM = "dim";
 const char* const NUM_ELEMENTS = "num_elements";
 const char* const IDS = "ids";
 const char* const DISTS = "dists";
 const char* const FLOAT32_VECTORS = "f32_vectors";
+const char* const SPARSE_VECTORS = "sparse_vectors";
 const char* const INT8_VECTORS = "i8_vectors";
+const char* const DATASET_PATHS = "paths";
+const char* const EXTRA_INFOS = "extra_infos";
+const char* const EXTRA_INFO_SIZE = "extra_info_size";
+
 const char* const HNSW_DATA = "hnsw_data";
 const char* const CONJUGATE_GRAPH_DATA = "conjugate_graph_data";
 const char* const DISKANN_PQ = "diskann_qp";
@@ -39,6 +51,7 @@ const char* const METRIC_L2 = "l2";
 const char* const METRIC_COSINE = "cosine";
 const char* const METRIC_IP = "ip";
 const char* const DATATYPE_FLOAT32 = "float32";
+const char* const DATATYPE_INT8 = "int8";
 const char* const BLANK_INDEX = "blank_index";
 
 // parameters
@@ -62,12 +75,28 @@ const char* const DISKANN_PARAMETER_BEAM_SEARCH = "beam_search";
 const char* const DISKANN_PARAMETER_IO_LIMIT = "io_limit";
 const char* const DISKANN_PARAMETER_EF_SEARCH = "ef_search";
 const char* const DISKANN_PARAMETER_REORDER = "use_reorder";
+const char* const DISKANN_PARAMETER_GRAPH_TYPE = "graph_type";
+const char* const ODESCENT_PARAMETER_ALPHA = "alpha";
+const char* const ODESCENT_PARAMETER_GRAPH_ITER_TURN = "graph_iter_turn";
+const char* const ODESCENT_PARAMETER_NEIGHBOR_SAMPLE_RATE = "neighbor_sample_rate";
+const char* const ODESCENT_PARAMETER_MIN_IN_DEGREE = "min_in_degree";
+const char* const ODESCENT_PARAMETER_BUILD_BLOCK_SIZE = "build_block_size";
+
+const char* const DISKANN_GRAPH_TYPE_VAMANA = "vamana";
+const char* const GRAPH_TYPE_ODESCENT = "odescent";
 
 const char* const HNSW_PARAMETER_EF_RUNTIME = "ef_search";
 const char* const HNSW_PARAMETER_M = "max_degree";
 const char* const HNSW_PARAMETER_CONSTRUCTION = "ef_construction";
 const char* const HNSW_PARAMETER_USE_STATIC = "use_static";
 const char* const HNSW_PARAMETER_REVERSED_EDGES = "use_reversed_edges";
+const char* const HNSW_PARAMETER_SKIP_RATIO = "skip_ratio";
+
+const char* const PYRAMID_PARAMETER_BASE_CODES = "base_codes";
+
+const char* const INDEX_PARAM = "index_param";
+
+const char PART_SLASH = '/';
 
 // statstic key
 const char* const STATSTIC_MEMORY = "memory";
@@ -91,5 +120,34 @@ const char* const MESSAGE_PARAMETER = "invalid parameter";
 // Serialize key
 const char* const SERIALIZE_MAGIC_NUM = "MAGIC_NUM";
 const char* const SERIALIZE_VERSION = "VERSION";
+
+const char* const SQ4_UNIFORM_TRUNC_RATE = "sq4_uniform_trunc_rate";
+const char* const RABITQ_PCA_DIM = "rabitq_pca_dim";
+
+const char* const HGRAPH_USE_REORDER = HGRAPH_USE_REORDER_KEY;
+const char* const HGRAPH_IGNORE_REORDER = "ignore_reorder";
+const char* const HGRAPH_BASE_QUANTIZATION_TYPE = "base_quantization_type";
+const char* const HGRAPH_GRAPH_MAX_DEGREE = "max_degree";
+const char* const HGRAPH_BUILD_EF_CONSTRUCTION = "ef_construction";
+const char* const HGRAPH_INIT_CAPACITY = "hgraph_init_capacity";
+const char* const HGRAPH_BUILD_THREAD_COUNT = "build_thread_count";
+const char* const HGRAPH_PRECISE_QUANTIZATION_TYPE = "precise_quantization_type";
+const char* const HGRAPH_BASE_IO_TYPE = "base_io_type";
+const char* const HGRAPH_BASE_FILE_PATH = "base_file_path";
+const char* const HGRAPH_PRECISE_IO_TYPE = "precise_io_type";
+const char* const HGRAPH_PRECISE_FILE_PATH = "precise_file_path";
+const char* const HGRAPH_PARAMETER_EF_RUNTIME = "ef_search";
+const char* const HGRAPH_EXTRA_INFO_SIZE = "extra_info_size";
+const char* const HGRAPH_USE_EXTRA_INFO_FILTER = "use_extra_info_filter";
+
+const char* const BRUTE_FORCE_QUANTIZATION_TYPE = "quantization_type";
+const char* const BRUTE_FORCE_IO_TYPE = "io_type";
+
+const char* const IVF_USE_RESIDUAL = "use_residual";
+const char* const IVF_TRAIN_TYPE = "ivf_train_type";
+const char* const IVF_BUCKETS_COUNT = "buckets_count";
+const char* const IVF_BASE_QUANTIZATION_TYPE = "base_quantization_type";
+const char* const IVF_BASE_IO_TYPE = "base_io_type";
+const char* const IVF_BASE_FILE_PATH = "base_file_path";
 
 };  // namespace vsag

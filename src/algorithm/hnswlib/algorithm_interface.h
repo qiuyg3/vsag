@@ -20,40 +20,47 @@
 #include <queue>
 #include <string>
 
+#include "base_filter_functor.h"
+#include "index/iterator_filter.h"
 #include "space_interface.h"
+#include "stream_reader.h"
+#include "typing.h"
+#include "vsag/dataset.h"
+#include "vsag/errors.h"
+#include "vsag/expected.hpp"
+#include "vsag/iterator_context.h"
 
 namespace hnswlib {
-typedef size_t labeltype;
 
-class BaseFilterFunctor {
-public:
-    virtual bool
-    operator()(hnswlib::labeltype id) {
-        return true;
-    }
-};
+using LabelType = vsag::LabelType;
 
 template <typename dist_t>
 class AlgorithmInterface {
 public:
     virtual bool
-    addPoint(const void* datapoint, labeltype label) = 0;
+    addPoint(const void* datapoint, LabelType label) = 0;
 
-    virtual std::priority_queue<std::pair<dist_t, labeltype>>
-    searchKnn(const void*, size_t, size_t, BaseFilterFunctor* isIdAllowed = nullptr) const = 0;
+    virtual std::priority_queue<std::pair<dist_t, LabelType>>
+    searchKnn(const void* query_data,
+              size_t k,
+              size_t ef,
+              const vsag::FilterPtr is_id_allowed = nullptr,
+              float skip_ratio = 0.9f,
+              vsag::IteratorFilterContext* iter_ctx = nullptr,
+              bool is_last_filter = false) const = 0;
 
-    virtual std::priority_queue<std::pair<dist_t, labeltype>>
-    searchRange(const void*, float, size_t, BaseFilterFunctor* isIdAllowed = nullptr) const = 0;
+    virtual std::priority_queue<std::pair<dist_t, LabelType>>
+    searchRange(const void* query_data,
+                float radius,
+                size_t ef,
+                const vsag::FilterPtr is_id_allowed = nullptr) const = 0;
 
     // Return k nearest neighbor in the order of closer fist
-    virtual std::vector<std::pair<dist_t, labeltype>>
+    virtual std::vector<std::pair<dist_t, LabelType>>
     searchKnnCloserFirst(const void* query_data,
                          size_t k,
                          size_t ef,
-                         BaseFilterFunctor* isIdAllowed = nullptr) const;
-
-    virtual void
-    saveIndex(const std::string& location) = 0;
+                         const vsag::FilterPtr& is_id_allowed = nullptr) const;
 
     virtual void
     saveIndex(void* d) = 0;
@@ -65,13 +72,24 @@ public:
     getMaxElements() = 0;
 
     virtual float
-    getDistanceByLabel(labeltype label, const void* data_point) = 0;
+    getDistanceByLabel(LabelType label, const void* data_point) = 0;
+
+    virtual tl::expected<vsag::DatasetPtr, vsag::Error>
+    getBatchDistanceByLabel(const int64_t* ids, const void* data_point, int64_t count) = 0;
+
+    virtual std::pair<int64_t, int64_t>
+    getMinAndMaxId() = 0;
 
     virtual const float*
-    getDataByLabel(labeltype label) const = 0;
+    getDataByLabel(LabelType label) const = 0;
 
-    virtual std::priority_queue<std::pair<float, labeltype>>
-    bruteForce(const void* data_point, int64_t k) = 0;
+    virtual void
+    copyDataByLabel(LabelType label, void* data_point) = 0;
+
+    virtual std::priority_queue<std::pair<float, LabelType>>
+    bruteForce(const void* data_point,
+               int64_t k,
+               const vsag::FilterPtr is_id_allowed = nullptr) const = 0;
 
     virtual void
     resizeIndex(size_t new_max_elements) = 0;
@@ -80,12 +98,7 @@ public:
     calcSerializeSize() = 0;
 
     virtual void
-    loadIndex(std::function<void(uint64_t, uint64_t, void*)> read_func,
-              SpaceInterface* s,
-              size_t max_elements_i = 0) = 0;
-
-    virtual void
-    loadIndex(std::istream& in_stream, SpaceInterface* s, size_t max_elements_i = 0) = 0;
+    loadIndex(StreamReader& reader, SpaceInterface* s, size_t max_elements_i = 0) = 0;
 
     virtual size_t
     getCurrentElementCount() = 0;
@@ -94,7 +107,10 @@ public:
     getDeletedCount() = 0;
 
     virtual bool
-    isValidLabel(labeltype label) = 0;
+    isValidLabel(LabelType label) = 0;
+
+    virtual bool
+    init_memory_space() = 0;
 
     virtual ~AlgorithmInterface() {
     }
