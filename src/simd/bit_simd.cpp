@@ -13,117 +13,118 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "sq4_simd.h"
+#include "bit_simd.h"
 
 #include "simd_status.h"
 
 namespace vsag {
 
-static SQ4ComputeType
-GetSQ4ComputeIP() {
+static BitOperatorType
+GetBitAnd() {
     if (SimdStatus::SupportAVX512()) {
 #if defined(ENABLE_AVX512)
-        return avx512::SQ4ComputeIP;
+        return avx512::BitAnd;
 #endif
     } else if (SimdStatus::SupportAVX2()) {
 #if defined(ENABLE_AVX2)
-        return avx2::SQ4ComputeIP;
+        return avx2::BitAnd;
 #endif
     } else if (SimdStatus::SupportAVX()) {
 #if defined(ENABLE_AVX)
-        return avx::SQ4ComputeIP;
+        return avx::BitAnd;
 #endif
     } else if (SimdStatus::SupportSSE()) {
 #if defined(ENABLE_SSE)
-        return sse::SQ4ComputeIP;
+        return sse::BitAnd;
 #endif
     } else if (SimdStatus::SupportNEON()) {
 #if defined(ENABLE_NEON)
-        return neon::SQ4ComputeIP;
+        return neon::BitAnd;
 #endif
     }
-    return generic::SQ4ComputeIP;
+    return generic::BitAnd;
 }
-SQ4ComputeType SQ4ComputeIP = GetSQ4ComputeIP();
+BitOperatorType BitAnd = GetBitAnd();
 
-static SQ4ComputeType
-GetSQ4ComputeL2Sqr() {
+static BitOperatorType
+GetBitOr() {
     if (SimdStatus::SupportAVX512()) {
 #if defined(ENABLE_AVX512)
-        return avx512::SQ4ComputeL2Sqr;
+        return avx512::BitOr;
 #endif
     } else if (SimdStatus::SupportAVX2()) {
 #if defined(ENABLE_AVX2)
-        return avx2::SQ4ComputeL2Sqr;
+        return avx2::BitOr;
 #endif
     } else if (SimdStatus::SupportAVX()) {
 #if defined(ENABLE_AVX)
-        return avx::SQ4ComputeL2Sqr;
+        return avx::BitOr;
 #endif
     } else if (SimdStatus::SupportSSE()) {
 #if defined(ENABLE_SSE)
-        return sse::SQ4ComputeL2Sqr;
+        return sse::BitOr;
 #endif
     } else if (SimdStatus::SupportNEON()) {
 #if defined(ENABLE_NEON)
-        return neon::SQ4ComputeL2Sqr;
+        return neon::BitOr;
 #endif
     }
-    return generic::SQ4ComputeL2Sqr;
+    return generic::BitOr;
 }
-SQ4ComputeType SQ4ComputeL2Sqr = GetSQ4ComputeL2Sqr();
+BitOperatorType BitOr = GetBitOr();
 
-static SQ4ComputeCodesType
-GetSQ4ComputeCodesIP() {
+static BitOperatorType
+GetBitXor() {
     if (SimdStatus::SupportAVX512()) {
 #if defined(ENABLE_AVX512)
-        return avx512::SQ4ComputeCodesIP;
+        return avx512::BitXor;
 #endif
     } else if (SimdStatus::SupportAVX2()) {
 #if defined(ENABLE_AVX2)
-        return avx2::SQ4ComputeCodesIP;
+        return avx2::BitXor;
 #endif
     } else if (SimdStatus::SupportAVX()) {
 #if defined(ENABLE_AVX)
-        return avx::SQ4ComputeCodesIP;
+        return avx::BitXor;
 #endif
     } else if (SimdStatus::SupportSSE()) {
 #if defined(ENABLE_SSE)
-        return sse::SQ4ComputeCodesIP;
+        return sse::BitXor;
 #endif
     } else if (SimdStatus::SupportNEON()) {
 #if defined(ENABLE_NEON)
-        return neon::SQ4ComputeCodesIP;
+        return neon::BitXor;
 #endif
     }
-    return generic::SQ4ComputeCodesIP;
+    return generic::BitXor;
 }
-SQ4ComputeCodesType SQ4ComputeCodesIP = GetSQ4ComputeCodesIP();
+BitOperatorType BitXor = GetBitXor();
 
-static SQ4ComputeCodesType
-GetSQ4ComputeCodesL2Sqr() {
+static BitNotType
+GetBitNot() {
     if (SimdStatus::SupportAVX512()) {
 #if defined(ENABLE_AVX512)
-        return avx512::SQ4ComputeCodesL2Sqr;
+        return avx512::BitNot;
 #endif
     } else if (SimdStatus::SupportAVX2()) {
 #if defined(ENABLE_AVX2)
-        return avx2::SQ4ComputeCodesL2Sqr;
+        return avx2::BitNot;
 #endif
     } else if (SimdStatus::SupportAVX()) {
 #if defined(ENABLE_AVX)
-        return avx::SQ4ComputeCodesL2Sqr;
+        return avx::BitNot;
 #endif
     } else if (SimdStatus::SupportSSE()) {
 #if defined(ENABLE_SSE)
-        return sse::SQ4ComputeCodesL2Sqr;
+        return sse::BitNot;
 #endif
     } else if (SimdStatus::SupportNEON()) {
 #if defined(ENABLE_NEON)
-        return neon::SQ4ComputeCodesL2Sqr;
+        return neon::BitNot;
 #endif
     }
-    return generic::SQ4ComputeCodesL2Sqr;
+    return generic::BitNot;
 }
-SQ4ComputeCodesType SQ4ComputeCodesL2Sqr = GetSQ4ComputeCodesL2Sqr();
+BitNotType BitNot = GetBitNot();
+
 }  // namespace vsag

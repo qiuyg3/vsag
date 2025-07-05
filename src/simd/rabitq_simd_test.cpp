@@ -59,6 +59,10 @@ TEST_CASE("RaBitQ FP32-BQ SIMD Compute Codes", "[ut][simd]") {
                 auto ip_32_1_sse = sse::RaBitQFloatBinaryIP(query, base, dim, inv_sqrt_d);
                 REQUIRE(std::abs(ip_32_1_sse - ip_32_32) < 1e-4);
             }
+            if (SimdStatus::SupportNEON()) {                         \
+            neon = neon::Func(query, base, dim, inv_sqrt_d);     \
+            REQUIRE(std::abs(gt - neon) < 1e-4);                 \
+        }   
         }
     }
 }
@@ -86,4 +90,5 @@ TEST_CASE("RaBitQ FP32-BQ SIMD Compute Benchmark", "[ut][simd][!benchmark]") {
     BENCHMARK_SIMD_COMPUTE(avx, RaBitQFloatBinaryIP);
     BENCHMARK_SIMD_COMPUTE(avx2, RaBitQFloatBinaryIP);
     BENCHMARK_SIMD_COMPUTE(avx512, RaBitQFloatBinaryIP);
+    BENCHMARK_SIMD_COMPUTE(neon, Normalize);
 }

@@ -13,36 +13,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "rabitq_simd.h"
+#include "pqfs_simd.h"
+
+#include "simd_status.h"
 
 namespace vsag {
 
-static RaBitQFloatBinaryType
-GetRaBitQFloatBinaryIP() {
+static PQFastScanLookUp32Type
+GetPQFastScanLookUp32() {
     if (SimdStatus::SupportAVX512()) {
 #if defined(ENABLE_AVX512)
-        return avx512::RaBitQFloatBinaryIP;
+        return avx512::PQFastScanLookUp32;
 #endif
     } else if (SimdStatus::SupportAVX2()) {
 #if defined(ENABLE_AVX2)
-        return avx2::RaBitQFloatBinaryIP;
+        return avx2::PQFastScanLookUp32;
 #endif
     } else if (SimdStatus::SupportAVX()) {
 #if defined(ENABLE_AVX)
-        return avx::RaBitQFloatBinaryIP;
+        return avx::PQFastScanLookUp32;
 #endif
     } else if (SimdStatus::SupportSSE()) {
 #if defined(ENABLE_SSE)
-        return sse::RaBitQFloatBinaryIP;
+        return sse::PQFastScanLookUp32;
 #endif
     } else if (SimdStatus::SupportNEON()) {
 #if defined(ENABLE_NEON)
-        return neon::RaBitQFloatBinaryIP;
+        return neon::PQFastScanLookUp32;
 #endif
     }
-    return generic::RaBitQFloatBinaryIP;
+    return generic::PQFastScanLookUp32;
 }
-
-RaBitQFloatBinaryType RaBitQFloatBinaryIP = GetRaBitQFloatBinaryIP();
-
+PQFastScanLookUp32Type PQFastScanLookUp32 = GetPQFastScanLookUp32();
 }  // namespace vsag
